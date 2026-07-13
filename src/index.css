@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: #091524;
+  background-image: radial-gradient(1200px 600px at 80% -10%, rgba(240, 115, 22, 0.08), transparent 60%),
+    radial-gradient(900px 500px at -10% 0%, rgba(26, 54, 93, 0.5), transparent 55%);
+  background-attachment: fixed;
+  color: #f1f5f9;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #091524;
+}
+::-webkit-scrollbar-thumb {
+  background: #22436b;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #f07316;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-line/70 bg-panel/80 p-5 backdrop-blur;
+  }
+  .card-hover {
+    @apply transition-colors hover:border-accent/50;
+  }
+  .btn {
+    @apply inline-flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/15 px-3 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/25 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .section-title {
+    @apply text-xs font-semibold uppercase tracking-widest text-accent;
+  }
+  .stat-num {
+    @apply text-3xl font-extrabold tracking-tight text-ink;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold;
+  }
+  .input {
+    @apply w-full rounded-lg border border-line/60 bg-bg/60 px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-accent/60 focus:outline-none disabled:opacity-50;
+  }
+  .link-btn {
+    @apply text-xs font-semibold text-accent transition-colors hover:text-accent/80 disabled:opacity-50;
+  }
+  .th {
+    @apply px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-muted;
+  }
+  .td {
+    @apply px-3 py-2 text-sm text-ink/90;
+  }
+}
