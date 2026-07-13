@@ -126,7 +126,10 @@ export default function AuditActivity({ a }) {
 
       {/* Recent audits table */}
       <Card className="lg:col-span-3">
-        <div className="mb-3 text-sm font-semibold text-ink">Recent Audits</div>
+        <div className="mb-3 flex items-center justify-between">
+          <div className="text-sm font-semibold text-ink">Recent Audits</div>
+          <a href="#/audits" className="link-btn">View all →</a>
+        </div>
         <div className="overflow-x-auto">
           <table className="min-w-full">
             <thead>
@@ -142,9 +145,29 @@ export default function AuditActivity({ a }) {
             </thead>
             <tbody>
               {a.recentAudits.map((au) => (
-                <tr key={au.id} className="border-b border-line/30 hover:bg-panel2/40">
-                  <td className="td font-medium">{au.siteName}</td>
-                  <td className="td text-muted">{au.title}</td>
+                <tr
+                  key={au.id}
+                  className="cursor-pointer border-b border-line/30 hover:bg-panel2/40"
+                  onClick={() => (window.location.hash = `/audits/${au.id}`)}
+                >
+                  <td className="td">
+                    <a
+                      href={`#/sites/${au.site_id}`}
+                      className="font-medium text-ink/90 hover:text-accent"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {au.siteName}
+                    </a>
+                  </td>
+                  <td className="td">
+                    <a
+                      href={`#/audits/${au.id}`}
+                      className="text-accent hover:underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {au.title}
+                    </a>
+                  </td>
                   <td className="td text-muted">{shortDate(au.audit_date || au.created_at)}</td>
                   <td className="td"><StatusPill status={au.status} /></td>
                   <td className={`td text-right font-semibold ${scoreColor(Number(au.compliance_score))}`}>

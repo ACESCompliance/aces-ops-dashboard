@@ -1,17 +1,28 @@
 import { useState } from 'react'
-import { PASSWORD, setAuthed } from '../lib/auth'
+import { setKey, verifyKey } from '../lib/auth'
 
 export default function Login({ onSuccess }) {
   const [value, setValue] = useState('')
-  const [error, setError] = useState(false)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
 
-  function submit(e) {
+  async function submit(e) {
     e.preventDefault()
-    if (value === PASSWORD) {
-      setAuthed()
-      onSuccess()
-    } else {
-      setError(true)
+    if (!value || busy) return
+    setBusy(true)
+    setError('')
+    try {
+      const ok = await verifyKey(value)
+      if (ok) {
+        setKey(value)
+        onSuccess()
+      } else {
+        setError('Incorrect password')
+      }
+    } catch {
+      setError('Could not reach the server — try again')
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -31,14 +42,14 @@ export default function Login({ onSuccess }) {
           value={value}
           onChange={(e) => {
             setValue(e.target.value)
-            setError(false)
+            setError('')
           }}
           placeholder="Password"
           className="mb-3 w-full rounded-lg border border-line bg-bg px-3 py-2 text-ink outline-none placeholder:text-muted focus:border-accent/60"
         />
-        {error && <p className="mb-3 text-sm text-bad">Incorrect password</p>}
-        <button type="submit" className="btn w-full justify-center py-2.5">
-          Unlock
+        {error && <p className="mb-3 text-sm text-bad">{error}</p>}
+        <button type="submit" disabled={busy} className="btn w-full justify-center py-2.5">
+          {busy ? 'Checking…' : 'Unlock'}
         </button>
       </form>
     </div>

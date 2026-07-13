@@ -13,14 +13,25 @@ export function Card({ children, className = '' }) {
   return <div className={`card ${className}`}>{children}</div>
 }
 
-export function StatCard({ label, value, sub, accent }) {
-  return (
-    <div className="card card-hover">
-      <div className="text-xs font-semibold uppercase tracking-wider text-muted">{label}</div>
+export function StatCard({ label, value, sub, accent, to }) {
+  const body = (
+    <>
+      <div className="flex items-start justify-between">
+        <div className="text-xs font-semibold uppercase tracking-wider text-muted">{label}</div>
+        {to && <span className="text-xs text-muted transition-colors group-hover:text-accent">→</span>}
+      </div>
       <div className={`stat-num mt-2 ${accent ? 'text-accent' : ''}`}>{value}</div>
       {sub && <div className="mt-1 text-xs text-muted">{sub}</div>}
-    </div>
+    </>
   )
+  if (to) {
+    return (
+      <a href={`#/${to}`} className="card card-hover group block cursor-pointer no-underline">
+        {body}
+      </a>
+    )
+  }
+  return <div className="card card-hover">{body}</div>
 }
 
 export function Bar({ value, max, color = '#F07316' }) {

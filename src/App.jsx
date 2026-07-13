@@ -10,19 +10,28 @@ import WebsiteRequests from './components/WebsiteRequests'
 import AppHealth from './components/AppHealth'
 import ActionsGenerated from './components/ActionsGenerated'
 import CRM from './components/crm/CRM'
+import SitesList from './components/SitesList'
+import SiteProfile from './components/SiteProfile'
+import AuditsList from './components/AuditsList'
+import AuditDetail from './components/AuditDetail'
+import Trends from './components/Trends'
 import { SectionHeader } from './components/ui'
 import { isAuthed } from './lib/auth'
 import { fetchData } from './lib/api'
 import { derive } from './lib/derive'
+import { useRoute, href } from './lib/router'
 
 const TABS = [
-  { key: 'dashboard', label: 'Dashboard' },
+  { key: '', label: 'Dashboard' },
+  { key: 'sites', label: 'Sites' },
+  { key: 'audits', label: 'Audits' },
+  { key: 'trends', label: 'Trends' },
   { key: 'crm', label: 'CRM' },
 ]
 
 export default function App() {
   const [authed, setAuthed] = useState(isAuthed())
-  const [tab, setTab] = useState('dashboard')
+  const route = useRoute()
   const [data, setData] = useState(null)
   const [fetchedAt, setFetchedAt] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -49,6 +58,10 @@ export default function App() {
 
   if (!authed) return <Login onSuccess={() => setAuthed(true)} />
 
+  const section = route[0] || ''
+  const id = route[1] || null
+  const activeTab = TABS.some((t) => t.key === section) ? section : ''
+
   return (
     <div className="min-h-screen">
       <TopBar onRefresh={refresh} loading={loading} fetchedAt={fetchedAt} />
@@ -57,27 +70,23 @@ export default function App() {
       <nav className="sticky top-[57px] z-[5] border-b border-line/60 bg-bg/80 backdrop-blur">
         <div className="mx-auto flex max-w-[1400px] gap-1 px-4 md:px-6">
           {TABS.map((t) => (
-            <button
+            <a
               key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`relative px-4 py-3 text-sm font-semibold transition-colors ${
-                tab === t.key ? 'text-accent' : 'text-muted hover:text-ink'
+              href={href(t.key)}
+              className={`relative px-4 py-3 text-sm font-semibold no-underline transition-colors ${
+                activeTab === t.key ? 'text-accent' : 'text-muted hover:text-ink'
               }`}
             >
               {t.label}
-              {tab === t.key && (
+              {activeTab === t.key && (
                 <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-accent" />
               )}
-            </button>
+            </a>
           ))}
         </div>
       </nav>
 
       <main className="mx-auto max-w-[1400px] space-y-8 px-4 py-6 md:px-6">
-        {tab === 'crm' && <CRM />}
-
-        {tab === 'dashboard' && (
-        <>
         {error && (
           <div className="rounded-lg border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
             <strong>Couldn’t load data:</strong> {error}
@@ -88,54 +97,66 @@ export default function App() {
           </div>
         )}
 
-        {!data && loading && (
+        {section === 'crm' && <CRM />}
+
+        {section !== 'crm' && !data && loading && (
           <div className="py-24 text-center text-muted">Loading ACES ops data…</div>
         )}
 
-        {data && (
+        {section !== 'crm' && data && (
           <>
-            <section>
-              <SectionHeader>Metrics</SectionHeader>
-              <MetricsRow m={data.metrics} />
-            </section>
+            {section === 'sites' && !id && <SitesList sites={data.detail.sites} />}
+            {section === 'sites' && id && <SiteProfile site={data.detail.siteById[id]} />}
+            {section === 'audits' && !id && (
+              <AuditsList audits={data.detail.audits} sites={data.detail.sites} />
+            )}
+            {section === 'audits' && id && <AuditDetail audit={data.detail.auditById[id]} />}
+            {section === 'trends' && <Trends trends={data.trends} sites={data.detail.sites} />}
 
-            <section>
-              <SectionHeader>Audit Activity</SectionHeader>
-              <AuditActivity a={data.auditActivity} />
-            </section>
+            {section === '' && (
+              <>
+                <section>
+                  <SectionHeader>Metrics</SectionHeader>
+                  <MetricsRow m={data.metrics} />
+                </section>
 
-            <section>
-              <SectionHeader>Lead Pipeline</SectionHeader>
-              <LeadPipeline p={data.leadPipeline} />
-            </section>
+                <section>
+                  <SectionHeader>Audit Activity</SectionHeader>
+                  <AuditActivity a={data.auditActivity} />
+                </section>
 
-            <section>
-              <SectionHeader>Geographic Breakdown</SectionHeader>
-              <GeoBreakdown geo={data.geo} />
-            </section>
+                <section>
+                  <SectionHeader>Lead Pipeline</SectionHeader>
+                  <LeadPipeline p={data.leadPipeline} />
+                </section>
 
-            <section>
-              <SectionHeader>n8n Workflow Health</SectionHeader>
-              <WorkflowHealth w={data.workflow} />
-            </section>
+                <section>
+                  <SectionHeader>Geographic Breakdown</SectionHeader>
+                  <GeoBreakdown geo={data.geo} />
+                </section>
 
-            <section>
-              <SectionHeader>Website · Consultation Requests</SectionHeader>
-              <WebsiteRequests website={data.website} />
-            </section>
+                <section>
+                  <SectionHeader>n8n Workflow Health</SectionHeader>
+                  <WorkflowHealth w={data.workflow} />
+                </section>
 
-            <section>
-              <SectionHeader>App Health Monitor</SectionHeader>
-              <AppHealth health={data.health} workflow={data.workflow} fetchedAt={fetchedAt} />
-            </section>
+                <section>
+                  <SectionHeader>Website · Consultation Requests</SectionHeader>
+                  <WebsiteRequests website={data.website} />
+                </section>
 
-            <section>
-              <SectionHeader>Actions Generated</SectionHeader>
-              <ActionsGenerated actions={data.actions} />
-            </section>
+                <section>
+                  <SectionHeader>App Health Monitor</SectionHeader>
+                  <AppHealth health={data.health} workflow={data.workflow} fetchedAt={fetchedAt} />
+                </section>
+
+                <section>
+                  <SectionHeader>Actions Generated</SectionHeader>
+                  <ActionsGenerated actions={data.actions} />
+                </section>
+              </>
+            )}
           </>
-        )}
-        </>
         )}
 
         <footer className="pt-4 text-center text-xs text-muted">

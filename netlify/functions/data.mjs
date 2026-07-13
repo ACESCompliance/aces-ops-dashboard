@@ -77,16 +77,25 @@ export default async (req) => {
     )
   }
 
-  // Optional shared-secret gate. If OPS_PASSWORD is set, require it.
-  if (OPS_PASSWORD) {
-    const url = new URL(req.url)
-    const provided = req.headers.get('x-ops-key') || url.searchParams.get('key') || ''
-    if (provided !== OPS_PASSWORD) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: JSON_HEADERS,
-      })
-    }
+  // Mandatory shared-secret gate. Fail closed if OPS_PASSWORD is missing.
+  if (!OPS_PASSWORD) {
+    return new Response(
+      JSON.stringify({ error: 'OPS_PASSWORD is not configured on the server.' }),
+      { status: 500, headers: JSON_HEADERS },
+    )
+  }
+  const url = new URL(req.url)
+  const provided = req.headers.get('x-ops-key') || ''
+  if (provided !== OPS_PASSWORD) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: JSON_HEADERS,
+    })
+  }
+
+  // Cheap auth check used by the login screen — no data fetched.
+  if (url.searchParams.get('ping')) {
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: JSON_HEADERS })
   }
 
   const startedAt = Date.now()
@@ -96,6 +105,10 @@ export default async (req) => {
     sites,
     findings,
     actions,
+    users,
+    members,
+    photos,
+    actionUpdates,
     compLeads,
     digiLeads,
     workflowRuns,
@@ -104,21 +117,33 @@ export default async (req) => {
   ] = await Promise.all([
     fetchTable(
       'app_audits',
-      'id,site_id,title,audit_date,status,compliance_score,total_findings,actual_findings_count,potential_findings_count,total_penalty_exposure,created_at,completed_at',
+      'id,site_id,created_by,title,audit_date,status,compliance_score,total_findings,actual_findings_count,potential_findings_count,total_penalty_exposure,created_at,completed_at',
       { order: 'created_at.desc' },
     ),
     fetchTable(
       'app_sites',
-      'id,name,company_name,city,state,site_type,subscription_tier,subscription_status,photos_used_this_month,created_at',
+      'id,name,company_name,address,city,state,zip,site_type,square_footage,employee_count,subscription_tier,subscription_status,trial_ends_at,photos_used_this_month,created_at',
     ),
     fetchTable(
       'app_findings',
-      'id,audit_id,finding_type,cfr_citation,title,severity,priority,estimated_penalty,created_at,dismissed_at',
+      'id,audit_id,photo_id,finding_type,cfr_citation,cfr_title,title,description,severity,priority,estimated_penalty,recommended_action,ai_confidence,created_at,dismissed_at,dismissal_reason',
     ),
     fetchTable(
       'app_actions',
-      'id,site_id,audit_id,title,assigned_to_name,due_date,status,priority,created_at,completed_at',
+      'id,site_id,audit_id,finding_id,title,description,assigned_to_name,assigned_to_email,due_date,status,priority,notes,created_at,completed_at,completed_by',
       { order: 'created_at.desc' },
+    ),
+    fetchTable('app_users', 'id,email,full_name,created_at'),
+    fetchTable('app_site_members', 'id,site_id,user_id,role,joined_at'),
+    fetchTable(
+      'app_audit_photos',
+      'id,audit_id,zone_label,status,uploaded_at,analyzed_at',
+      { order: 'uploaded_at.asc' },
+    ),
+    fetchTable(
+      'app_action_updates',
+      'id,action_id,update_text,kind,created_at',
+      { order: 'created_at.asc' },
     ),
     fetchTable(
       'aces_compliance_leads',
@@ -160,6 +185,10 @@ export default async (req) => {
     sites: sites.rows,
     findings: findings.rows,
     actions: actions.rows,
+    users: users.error ? [] : users.rows,
+    members: members.error ? [] : members.rows,
+    photos: photos.error ? [] : photos.rows,
+    actionUpdates: actionUpdates.error ? [] : actionUpdates.rows,
     compLeads: compLeads.rows,
     digiLeads: digiLeads.rows,
     workflowRuns: workflowRuns.rows,
@@ -171,6 +200,9 @@ export default async (req) => {
       sites: sites.error,
       findings: findings.error,
       actions: actions.error,
+      users: users.error,
+      members: members.error,
+      photos: photos.error,
       compLeads: compLeads.error,
       digiLeads: digiLeads.error,
       workflowRuns: workflowRuns.error,

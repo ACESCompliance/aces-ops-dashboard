@@ -15,9 +15,8 @@
 const SUPABASE_URL =
   process.env.SUPABASE_URL || 'https://wuwdmqkblrbigdoehbrv.supabase.co'
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
-// Mutations always require the password. OPS_PASSWORD overrides the default that
-// matches the dashboard login the browser already sends as x-ops-key.
-const OPS_PASSWORD = process.env.OPS_PASSWORD || 'aces2026'
+// Every method requires the password. No default — fail closed if unset.
+const OPS_PASSWORD = process.env.OPS_PASSWORD || ''
 
 const REST = `${SUPABASE_URL}/rest/v1`
 
@@ -73,15 +72,19 @@ async function fetchAll(table, columns, order) {
 }
 
 function authorized(req) {
-  const url = new URL(req.url)
-  const provided = req.headers.get('x-ops-key') || url.searchParams.get('key') || ''
-  return provided === OPS_PASSWORD
+  const provided = req.headers.get('x-ops-key') || ''
+  return OPS_PASSWORD !== '' && provided === OPS_PASSWORD
 }
 
 export default async (req) => {
   if (!SERVICE_KEY) {
     return json({ error: 'SUPABASE_SERVICE_ROLE_KEY is not configured on the server.' }, 500)
   }
+  if (!OPS_PASSWORD) {
+    return json({ error: 'OPS_PASSWORD is not configured on the server.' }, 500)
+  }
+  // Reads are just as sensitive as writes here (full lead book) — gate everything.
+  if (!authorized(req)) return json({ error: 'Unauthorized' }, 401)
 
   const url = new URL(req.url)
   const method = req.method.toUpperCase()

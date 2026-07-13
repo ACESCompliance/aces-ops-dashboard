@@ -7,6 +7,10 @@ export function derive(raw) {
     sites = [],
     findings = [],
     actions = [],
+    users = [],
+    members = [],
+    photos = [],
+    actionUpdates = [],
     compLeads = [],
     digiLeads = [],
     workflowRuns = [],
@@ -140,6 +144,152 @@ export function derive(raw) {
     siteName: siteById.get(a.site_id)?.name || '—',
   }))
 
+  // ---- Section 9: drill-down joins ---------------------------------------
+  const userById = new Map(users.map((u) => [u.id, u]))
+  const auditsBySite = groupBy(audits, (a) => a.site_id)
+  const findingsByAudit = groupBy(findings, (f) => f.audit_id)
+  const photosByAudit = groupBy(photos, (p) => p.audit_id)
+  const actionsByAudit = groupBy(actions, (a) => a.audit_id)
+  const actionsBySite = groupBy(actions, (a) => a.site_id)
+  const updatesByAction = groupBy(actionUpdates, (u) => u.action_id)
+
+  const membersBySite = groupBy(members, (m) => m.site_id)
+  const memberView = (m) => {
+    const u = userById.get(m.user_id)
+    return {
+      id: m.id,
+      role: m.role,
+      joined_at: m.joined_at,
+      name: u?.full_name || '—',
+      email: u?.email || '—',
+    }
+  }
+
+  const sitesDetail = sites
+    .map((s) => {
+      const sAudits = (auditsBySite.get(s.id) || [])
+        .slice()
+        .sort((a, b) => new Date(b.audit_date || b.created_at) - new Date(a.audit_date || a.created_at))
+      const mems = (membersBySite.get(s.id) || []).map(memberView)
+      const owner = mems.find((m) => m.role === 'owner') || null
+      const latest = sAudits[0] || null
+      const sActions = actionsBySite.get(s.id) || []
+      const openActions = sActions.filter((a) => a.status !== 'completed' && a.status !== 'cancelled')
+      // Oldest → newest for the score trend line.
+      const scoreTrend = sAudits
+        .slice()
+        .reverse()
+        .filter((a) => a.compliance_score != null)
+        .map((a) => ({
+          date: a.audit_date || a.created_at,
+          score: Number(a.compliance_score),
+          title: a.title,
+          id: a.id,
+        }))
+      return {
+        ...s,
+        owner,
+        members: mems,
+        audits: sAudits,
+        auditCount: sAudits.length,
+        completedAudits: sAudits.filter((a) => a.status === 'complete').length,
+        latestScore: latest?.compliance_score != null ? Number(latest.compliance_score) : null,
+        latestAuditDate: latest ? latest.audit_date || latest.created_at : null,
+        penaltyExposure: sAudits.reduce((t, a) => t + (Number(a.total_penalty_exposure) || 0), 0),
+        findingsCount: sAudits.reduce((t, a) => t + (findingsByAudit.get(a.id) || []).length, 0),
+        photosCount: sAudits.reduce((t, a) => t + (photosByAudit.get(a.id) || []).length, 0),
+        openActionsCount: openActions.length,
+        actions: sActions,
+        scoreTrend,
+      }
+    })
+    .sort((a, b) => b.auditCount - a.auditCount || a.name.localeCompare(b.name))
+
+  const auditsDetail = audits.map((a) => {
+    const site = siteById.get(a.site_id)
+    const creator = userById.get(a.created_by)
+    const aFindings = findingsByAudit.get(a.id) || []
+    const aActions = (actionsByAudit.get(a.id) || []).map((ac) => ({
+      ...ac,
+      updates: updatesByAction.get(ac.id) || [],
+    }))
+    return {
+      ...a,
+      siteName: site?.name || '—',
+      siteCompany: site?.company_name || null,
+      creatorName: creator?.full_name || null,
+      creatorEmail: creator?.email || null,
+      findings: aFindings,
+      photosMeta: photosByAudit.get(a.id) || [],
+      actions: aActions,
+    }
+  })
+
+  const detail = {
+    sites: sitesDetail,
+    siteById: Object.fromEntries(sitesDetail.map((s) => [s.id, s])),
+    audits: auditsDetail,
+    auditById: Object.fromEntries(auditsDetail.map((a) => [a.id, a])),
+  }
+
+  // ---- Section 10: trends -------------------------------------------------
+  // Monthly buckets from the first event to now (min 3 months so charts have room).
+  const monthKey = (d) => {
+    const t = new Date(d)
+    return isNaN(t) ? null : `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`
+  }
+  const allDates = [
+    ...audits.map((a) => a.created_at),
+    ...photos.map((p) => p.uploaded_at),
+    ...actions.map((a) => a.completed_at || a.created_at),
+    ...findings.map((f) => f.created_at),
+  ].filter(Boolean)
+  const months = monthRange(allDates, 3)
+
+  const engagementBySite = {}
+  const engagement = months.map((mk) => {
+    const row = { month: mk, label: monthLabel(mk), audits: 0, photos: 0, actionsDone: 0 }
+    return row
+  })
+  const engIdx = new Map(engagement.map((r, i) => [r.month, i]))
+  const siteNameOf = (siteId) => siteById.get(siteId)?.name || 'Unknown'
+  const bump = (mk, siteId, field) => {
+    const i = engIdx.get(mk)
+    if (i == null) return
+    engagement[i][field] += 1
+    const sn = siteNameOf(siteId)
+    if (!engagementBySite[sn]) {
+      engagementBySite[sn] = months.map((m) => ({
+        month: m, label: monthLabel(m), audits: 0, photos: 0, actionsDone: 0,
+      }))
+    }
+    engagementBySite[sn][i][field] += 1
+  }
+  const auditSiteById = new Map(audits.map((a) => [a.id, a.site_id]))
+  for (const a of audits) bump(monthKey(a.created_at), a.site_id, 'audits')
+  for (const p of photos) bump(monthKey(p.uploaded_at), auditSiteById.get(p.audit_id), 'photos')
+  for (const a of actions) {
+    if (a.completed_at) bump(monthKey(a.completed_at), a.site_id, 'actionsDone')
+  }
+
+  const severityBucket = (f) => {
+    if (f.priority === 'critical' || f.severity === 'willful' || f.severity === 'repeat') return 'critical'
+    if (f.severity === 'serious') return 'serious'
+    return 'other'
+  }
+  const sevIdx = new Map(months.map((m, i) => [m, i]))
+  const severityByMonth = months.map((mk) => ({
+    month: mk, label: monthLabel(mk), critical: 0, serious: 0, other: 0, penalty: 0,
+  }))
+  for (const f of liveFindings) {
+    const i = sevIdx.get(monthKey(f.created_at))
+    if (i == null) continue
+    severityByMonth[i][severityBucket(f)] += 1
+    severityByMonth[i].penalty += Number(f.estimated_penalty) || 0
+  }
+
+  const trends = { months, engagement, engagementBySite, severityByMonth }
+
   return {
     metrics,
     auditActivity,
@@ -148,12 +298,51 @@ export function derive(raw) {
     workflow,
     website,
     actions: actionsDetail,
+    detail,
+    trends,
     health: raw.health,
     errors: raw.errors,
   }
 }
 
 // ---- helpers -------------------------------------------------------------
+function groupBy(rows, keyFn) {
+  const m = new Map()
+  for (const r of rows) {
+    const k = keyFn(r)
+    if (k == null) continue
+    if (!m.has(k)) m.set(k, [])
+    m.get(k).push(r)
+  }
+  return m
+}
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+function monthLabel(mk) {
+  const [y, m] = mk.split('-').map(Number)
+  return `${MONTH_NAMES[m - 1]} '${String(y).slice(2)}`
+}
+
+// Consecutive YYYY-MM keys from the earliest date seen through the current
+// month, guaranteeing at least `minMonths` buckets so sparse charts have room.
+function monthRange(dates, minMonths) {
+  const now = new Date()
+  let start = new Date(now.getFullYear(), now.getMonth() - (minMonths - 1), 1)
+  for (const d of dates) {
+    const t = new Date(d)
+    if (!isNaN(t) && t < start) start = new Date(t.getFullYear(), t.getMonth(), 1)
+  }
+  const out = []
+  const cur = new Date(start)
+  const end = new Date(now.getFullYear(), now.getMonth(), 1)
+  while (cur <= end && out.length < 36) {
+    out.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}`)
+    cur.setMonth(cur.getMonth() + 1)
+  }
+  return out
+}
+
 function countBy(rows, keyFn) {
   const m = {}
   for (const r of rows) {

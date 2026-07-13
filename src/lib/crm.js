@@ -1,10 +1,11 @@
-import { PASSWORD } from './auth'
+import { getKey } from './auth'
 
 // In production the function is served at /api/crm (see config path in crm.mjs).
 // VITE_API_BASE lets a plain `vite dev` point at a running `netlify dev`.
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 
-const KEY_HEADERS = { 'x-ops-key': PASSWORD }
+// Read the key lazily so login (which sets it) always wins.
+const keyHeaders = () => ({ 'x-ops-key': getKey() })
 
 async function unwrap(res) {
   if (!res.ok) {
@@ -20,13 +21,13 @@ async function unwrap(res) {
 }
 
 export async function fetchLeads() {
-  const res = await fetch(`${API_BASE}/api/crm`, { headers: KEY_HEADERS })
+  const res = await fetch(`${API_BASE}/api/crm`, { headers: keyHeaders() })
   return (await unwrap(res)).leads || []
 }
 
 export async function fetchActivities(leadId) {
   const res = await fetch(`${API_BASE}/api/crm?lead_id=${encodeURIComponent(leadId)}`, {
-    headers: KEY_HEADERS,
+    headers: keyHeaders(),
   })
   return (await unwrap(res)).activities || []
 }
@@ -34,7 +35,7 @@ export async function fetchActivities(leadId) {
 export async function addActivity(leadId, activityType, description) {
   const res = await fetch(`${API_BASE}/api/crm`, {
     method: 'POST',
-    headers: { ...KEY_HEADERS, 'Content-Type': 'application/json' },
+    headers: { ...keyHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ lead_id: leadId, activity_type: activityType, description }),
   })
   return (await unwrap(res)).activity
@@ -43,7 +44,7 @@ export async function addActivity(leadId, activityType, description) {
 export async function updateLead(leadId, fields) {
   const res = await fetch(`${API_BASE}/api/crm`, {
     method: 'PUT',
-    headers: { ...KEY_HEADERS, 'Content-Type': 'application/json' },
+    headers: { ...keyHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ lead_id: leadId, fields }),
   })
   return (await unwrap(res)).lead
