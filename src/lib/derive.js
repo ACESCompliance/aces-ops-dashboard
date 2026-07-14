@@ -120,6 +120,32 @@ export function derive(raw) {
     else if (lastRun.success && ageDays <= 10) healthLevel = 'yellow'
     else healthLevel = 'red'
   }
+  // Website Enricher stats — computed straight from lead rows so the panel
+  // works without new run-log columns. Tripwire: 48h of leads with zero
+  // contact data means enrichment is silently broken (the June failure mode).
+  const hasRealSite = (l) => (l.website || '').startsWith('http')
+  const hasEmail = (l) => !!(l.contact_email && l.contact_email.trim())
+  const hasSocial = (l) => !!(l.linkedin_company_url || l.facebook_url || l.instagram_url)
+  const leads24h = compLeads.filter((l) => new Date(l.created_at).getTime() >= now - DAY_MS)
+  const leads48h = compLeads.filter((l) => new Date(l.created_at).getTime() >= now - 2 * DAY_MS)
+  const enrichment = {
+    leads24: leads24h.length,
+    withSite24: leads24h.filter(hasRealSite).length,
+    emails24: leads24h.filter(hasEmail).length,
+    socials24: leads24h.filter(hasSocial).length,
+    pendingQueue: compLeads.filter(
+      (l) =>
+        hasRealSite(l) &&
+        ['pending_enrichment', 'enrichment_deferred'].includes(l.email_quality) &&
+        (l.enrichment_attempts || 0) < 2,
+    ).length,
+    linkedinTotal: compLeads.filter((l) => l.linkedin_company_url).length,
+    facebookTotal: compLeads.filter((l) => l.facebook_url).length,
+    instagramTotal: compLeads.filter((l) => l.instagram_url).length,
+    tripwire:
+      leads48h.length >= 5 && !leads48h.some((l) => hasEmail(l) || hasSocial(l)),
+  }
+
   const workflow = {
     lastRun,
     runsTrend,
@@ -129,7 +155,8 @@ export function derive(raw) {
     apolloEmails: sumBy(workflowRuns, 'apollo_emails_found'),
     hunterEmails: sumBy(workflowRuns, 'hunter_emails_found'),
     totalLeadsAdded: sumBy(workflowRuns, 'compliance_leads_added') + sumBy(workflowRuns, 'digital_leads_added'),
-    healthLevel,
+    healthLevel: enrichment.tripwire && healthLevel === 'green' ? 'yellow' : healthLevel,
+    enrichment,
   }
 
   // ---- Section 6: website / consultation requests -----------------------

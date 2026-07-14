@@ -147,7 +147,7 @@ export default async (req) => {
     ),
     fetchTable(
       'aces_compliance_leads',
-      'id,business_name,business_type,city,state,contact_email,contact_name,contact_title,lead_status,lead_tier,email_quality,google_rating,date_found,created_at',
+      'id,business_name,business_type,city,state,contact_email,contact_name,contact_title,lead_status,lead_tier,email_quality,google_rating,date_found,created_at,website,linkedin_company_url,facebook_url,instagram_url,enrichment_attempts',
       { order: 'created_at.desc' },
     ),
     fetchTable('aces_digital_leads', 'id,city,state,trade_category,contact_email,lead_status,created_at'),

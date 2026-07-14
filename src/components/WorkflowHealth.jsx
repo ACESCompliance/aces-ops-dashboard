@@ -34,8 +34,42 @@ function Metric({ label, value, sub }) {
 
 export default function WorkflowHealth({ w }) {
   const last = w.lastRun
+  const e = w.enrichment
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-4">
+      <Card>
+        <div className="mb-3 flex items-center justify-between">
+          <div className="text-sm font-semibold text-ink">Website Enrichment</div>
+          <HealthDot level={e?.tripwire ? 'red' : 'green'} />
+        </div>
+        {e ? (
+          <div className="space-y-3">
+            {e.tripwire && (
+              <div className="rounded-lg border border-bad/40 bg-bad/10 p-2 text-xs font-semibold text-bad">
+                ⚠ 48h of leads with zero contact data — enrichment may be silently broken. Check the
+                Website Enricher workflow in n8n.
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              <Metric
+                label="Leads · 24h"
+                value={num(e.leads24)}
+                sub={`${num(e.withSite24)} with websites`}
+              />
+              <Metric label="Emails · 24h" value={num(e.emails24)} sub={`${num(e.socials24)} with socials`} />
+              <Metric label="Pending Queue" value={num(e.pendingQueue)} sub="awaiting enricher" />
+              <Metric
+                label="Socials · all-time"
+                value={num(e.linkedinTotal + e.facebookTotal + e.instagramTotal)}
+                sub={`${num(e.linkedinTotal)} LI · ${num(e.facebookTotal)} FB · ${num(e.instagramTotal)} IG`}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm text-muted">No lead data.</div>
+        )}
+      </Card>
+
       <Card>
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-semibold text-ink">Pipeline Health</div>
