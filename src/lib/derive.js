@@ -14,6 +14,7 @@ export function derive(raw) {
     compLeads = [],
     digiLeads = [],
     workflowRuns = [],
+    outreach: outreachRows = [],
     contacts = [],
     oshaStandards = 0,
   } = raw || {}
@@ -317,6 +318,50 @@ export function derive(raw) {
 
   const trends = { months, engagement, engagementBySite, severityByMonth }
 
+  // ---- Section 11: outreach pipeline -------------------------------------
+  // The queue is the source of truth for what prospects actually receive.
+  // "Stuck" detection exists because a silent mark-as-sent failure once caused
+  // duplicate sends for weeks — anything approved but unsent >24h is flagged.
+  const ageDays = (d) => (d ? Math.floor((now - new Date(d).getTime()) / DAY_MS) : null)
+  const oRows = outreachRows.map((r) => ({
+    ...r,
+    createdDays: ageDays(r.created_at),
+    approvedDays: ageDays(r.approved_at),
+    sentDays: ageDays(r.sent_at),
+  }))
+  const oCounts = countBy(oRows, (r) => r.status || 'unknown')
+  const sentRows = oRows.filter((r) => r.sent_at)
+  const stuckApproved = oRows.filter(
+    (r) => r.status === 'approved' && r.channel === 'email' && !r.sent_at && (r.approvedDays ?? 0) >= 1,
+  )
+  const withErrors = oRows.filter((r) => r.error_message)
+  const manualTouches = oRows.filter(
+    (r) => r.status === 'approved' && r.channel !== 'email' && !r.sent_at,
+  )
+  const oldestPending = oRows
+    .filter((r) => r.status === 'pending')
+    .reduce((max, r) => Math.max(max, r.createdDays || 0), 0)
+  // Sends per day, last 30 days, for the activity chart.
+  const sendsTrend = dailySeries(sentRows.map((r) => ({ created_at: r.sent_at })), 30, 'created_at')
+  const outreach = {
+    rows: oRows,
+    counts: oCounts,
+    pending: oCounts.pending || 0,
+    approved: oCounts.approved || 0,
+    sentTotal: sentRows.length,
+    sent7d: sentRows.filter((r) => (r.sentDays ?? 99) < 7).length,
+    sent30d: sentRows.filter((r) => (r.sentDays ?? 99) < 30).length,
+    lastSentAt: sentRows.length
+      ? sentRows.reduce((m, r) => (r.sent_at > m ? r.sent_at : m), sentRows[0].sent_at)
+      : null,
+    stuckApproved,
+    withErrors,
+    manualTouches,
+    oldestPendingDays: oldestPending,
+    sendsTrend,
+    alarm: stuckApproved.length > 0 || withErrors.length > 0,
+  }
+
   return {
     metrics,
     auditActivity,
@@ -327,6 +372,7 @@ export function derive(raw) {
     actions: actionsDetail,
     detail,
     trends,
+    outreach,
     health: raw.health,
     errors: raw.errors,
   }

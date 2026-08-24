@@ -15,6 +15,7 @@ import SiteProfile from './components/SiteProfile'
 import AuditsList from './components/AuditsList'
 import AuditDetail from './components/AuditDetail'
 import Trends from './components/Trends'
+import Outreach from './components/Outreach'
 import { SectionHeader } from './components/ui'
 import { isAuthed } from './lib/auth'
 import { fetchData } from './lib/api'
@@ -26,6 +27,7 @@ const TABS = [
   { key: 'sites', label: 'Sites' },
   { key: 'audits', label: 'Audits' },
   { key: 'trends', label: 'Trends' },
+  { key: 'outreach', label: 'Outreach' },
   { key: 'crm', label: 'CRM' },
 ]
 
@@ -112,12 +114,13 @@ export default function App() {
             )}
             {section === 'audits' && id && <AuditDetail audit={data.detail.auditById[id]} />}
             {section === 'trends' && <Trends trends={data.trends} sites={data.detail.sites} />}
+            {section === 'outreach' && <Outreach o={data.outreach} />}
 
             {section === '' && (
               <>
                 <section>
                   <SectionHeader>Metrics</SectionHeader>
-                  <MetricsRow m={data.metrics} />
+                  <MetricsRow m={data.metrics} outreach={data.outreach} />
                 </section>
 
                 <section>

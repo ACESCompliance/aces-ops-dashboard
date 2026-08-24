@@ -2,9 +2,10 @@ import { StatCard } from './ui'
 import { num, pct } from '../lib/format'
 
 // Every tile is a door — clicking opens the list behind the number.
-export default function MetricsRow({ m }) {
+export default function MetricsRow({ m, outreach }) {
+  const stuck = outreach?.stuckApproved?.length || 0
   return (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
       <StatCard
         label="Audits Completed"
         value={num(m.auditsComplete)}
@@ -24,6 +25,16 @@ export default function MetricsRow({ m }) {
         value={num(m.leadsWithEmail)}
         sub={`${pct(m.leadEmailRate)} have an email`}
         to="crm"
+      />
+      <StatCard
+        label="Outreach Queue"
+        value={num(outreach?.pending ?? 0)}
+        sub={
+          stuck
+            ? `⚠ ${num(stuck)} approved stuck unsent`
+            : `awaiting approval · ${num(outreach?.sent30d ?? 0)} sent /30d`
+        }
+        to="outreach"
       />
       <StatCard label="OSHA Standards" value={num(m.oshaStandards)} sub="in knowledge base" />
     </div>
