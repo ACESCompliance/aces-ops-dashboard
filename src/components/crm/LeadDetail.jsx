@@ -28,6 +28,7 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
   const [fit, setFit] = useState({
     warm_or_cold: lead.warm_or_cold || '',
     mutual_connection: lead.mutual_connection || '',
+    deal_value_usd: lead.deal_value_usd ?? '',
   })
   const [copied, setCopied] = useState(false)
   const [social, setSocial] = useState({
@@ -292,6 +293,16 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
                 value={fit.mutual_connection}
                 onChange={(e) => setFit((f) => ({ ...f, mutual_connection: e.target.value }))}
                 placeholder="Who can introduce you"
+                className="input"
+              />
+            </div>
+            <div className="mb-1">
+              <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted">Deal value (USD, when won)</label>
+              <input
+                type="number"
+                value={fit.deal_value_usd}
+                onChange={(e) => setFit((f) => ({ ...f, deal_value_usd: e.target.value }))}
+                placeholder="3500"
                 className="input"
               />
             </div>

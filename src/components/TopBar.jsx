@@ -12,7 +12,7 @@ export default function TopBar({ onRefresh, loading, fetchedAt }) {
             <div className="text-base font-extrabold leading-tight tracking-tight text-ink">
               ACES <span className="text-accent">Ops</span>
             </div>
-            <div className="text-[11px] text-muted">Compliance Systems · founder dashboard</div>
+            <div className="text-[11px] text-muted">Time Back practice · founder dashboard</div>
           </div>
         </div>
         <div className="flex items-center gap-3">

@@ -26,6 +26,11 @@ export async function fetchLeads({ archived = false } = {}) {
   return (await unwrap(res)).leads || []
 }
 
+export async function fetchSummary() {
+  const res = await fetch(`${API_BASE}/api/crm?summary=1`, { headers: keyHeaders() })
+  return unwrap(res)
+}
+
 export async function fetchActivities(leadId) {
   const res = await fetch(`${API_BASE}/api/crm?lead_id=${encodeURIComponent(leadId)}`, {
     headers: keyHeaders(),

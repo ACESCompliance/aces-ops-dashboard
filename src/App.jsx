@@ -10,6 +10,7 @@ import WebsiteRequests from './components/WebsiteRequests'
 import AppHealth from './components/AppHealth'
 import ActionsGenerated from './components/ActionsGenerated'
 import CRM from './components/crm/CRM'
+import Home from './components/Home'
 import SitesList from './components/SitesList'
 import SiteProfile from './components/SiteProfile'
 import AuditsList from './components/AuditsList'
@@ -22,13 +23,20 @@ import { fetchData } from './lib/api'
 import { derive } from './lib/derive'
 import { useRoute, href } from './lib/router'
 
+// v2 (Oct 2026): Home + CRM are the business. Everything from the OSHA-audit era
+// lives under "v1 Archive" — kept for reference, not for daily work.
 const TABS = [
-  { key: '', label: 'Dashboard' },
+  { key: '', label: 'Home' },
+  { key: 'crm', label: 'CRM' },
+  { key: 'legacy', label: 'v1 Archive' },
+]
+const LEGACY_SECTIONS = new Set(['legacy', 'sites', 'audits', 'trends', 'outreach'])
+const LEGACY_SUBNAV = [
+  { key: 'legacy', label: 'Overview' },
   { key: 'sites', label: 'Sites' },
   { key: 'audits', label: 'Audits' },
   { key: 'trends', label: 'Trends' },
-  { key: 'outreach', label: 'Outreach' },
-  { key: 'crm', label: 'CRM' },
+  { key: 'outreach', label: 'Email Queue' },
 ]
 
 export default function App() {
@@ -54,15 +62,17 @@ export default function App() {
     }
   }, [])
 
+  const onLegacy = LEGACY_SECTIONS.has(route[0] || '')
   useEffect(() => {
-    if (authed) refresh()
-  }, [authed, refresh])
+    if (authed && onLegacy && !data) refresh()
+  }, [authed, onLegacy, data, refresh])
 
   if (!authed) return <Login onSuccess={() => setAuthed(true)} />
 
   const section = route[0] || ''
   const id = route[1] || null
-  const activeTab = TABS.some((t) => t.key === section) ? section : ''
+  const activeTab = LEGACY_SECTIONS.has(section) ? 'legacy' : section === 'crm' ? 'crm' : ''
+  const isLegacy = LEGACY_SECTIONS.has(section)
 
   return (
     <div className="min-h-screen">
@@ -99,13 +109,36 @@ export default function App() {
           </div>
         )}
 
+        {section === '' && <Home />}
         {section === 'crm' && <CRM />}
 
-        {section !== 'crm' && !data && loading && (
-          <div className="py-24 text-center text-muted">Loading ACES ops data…</div>
+        {isLegacy && (
+          <>
+            <div className="rounded-lg border border-line/60 bg-panel/60 px-4 py-3 text-xs text-muted">
+              <strong className="text-ink">v1 Archive.</strong> OSHA-audit era data (warehouse leads,
+              audits, cold-email queue). Kept for reference; nothing here drives the current practice.
+            </div>
+            <div className="inline-flex flex-wrap rounded-lg border border-line/60 bg-panel/60 p-1">
+              {LEGACY_SUBNAV.map((t) => (
+                <a
+                  key={t.key}
+                  href={href(t.key)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium no-underline transition-colors ${
+                    section === t.key ? 'bg-accent/20 text-accent' : 'text-muted hover:text-ink'
+                  }`}
+                >
+                  {t.label}
+                </a>
+              ))}
+            </div>
+          </>
         )}
 
-        {section !== 'crm' && data && (
+        {isLegacy && !data && loading && (
+          <div className="py-24 text-center text-muted">Loading archive…</div>
+        )}
+
+        {isLegacy && data && (
           <>
             {section === 'sites' && !id && <SitesList sites={data.detail.sites} />}
             {section === 'sites' && id && <SiteProfile site={data.detail.siteById[id]} />}
@@ -116,43 +149,36 @@ export default function App() {
             {section === 'trends' && <Trends trends={data.trends} sites={data.detail.sites} />}
             {section === 'outreach' && <Outreach o={data.outreach} />}
 
-            {section === '' && (
+            {section === 'legacy' && (
               <>
                 <section>
-                  <SectionHeader>Metrics</SectionHeader>
+                  <SectionHeader>Metrics (v1)</SectionHeader>
                   <MetricsRow m={data.metrics} outreach={data.outreach} />
                 </section>
-
                 <section>
                   <SectionHeader>Audit Activity</SectionHeader>
                   <AuditActivity a={data.auditActivity} />
                 </section>
-
                 <section>
-                  <SectionHeader>Lead Pipeline</SectionHeader>
+                  <SectionHeader>Lead Pipeline (v1 leads)</SectionHeader>
                   <LeadPipeline p={data.leadPipeline} />
                 </section>
-
                 <section>
                   <SectionHeader>Geographic Breakdown</SectionHeader>
                   <GeoBreakdown geo={data.geo} />
                 </section>
-
                 <section>
                   <SectionHeader>n8n Workflow Health</SectionHeader>
                   <WorkflowHealth w={data.workflow} />
                 </section>
-
                 <section>
                   <SectionHeader>Website · Consultation Requests</SectionHeader>
                   <WebsiteRequests website={data.website} />
                 </section>
-
                 <section>
                   <SectionHeader>App Health Monitor</SectionHeader>
                   <AppHealth health={data.health} workflow={data.workflow} fetchedAt={fetchedAt} />
                 </section>
-
                 <section>
                   <SectionHeader>Actions Generated</SectionHeader>
                   <ActionsGenerated actions={data.actions} />
@@ -163,7 +189,7 @@ export default function App() {
         )}
 
         <footer className="pt-4 text-center text-xs text-muted">
-          ACES Compliance Systems · ops dashboard · single-user
+          ACES Compliance Systems · buying your time back · founder dashboard
         </footer>
       </main>
     </div>

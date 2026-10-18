@@ -33,6 +33,7 @@ const LEAD_COLUMNS = [
   'pipeline_stage', 'facebook_url', 'instagram_url', 'last_contacted_at',
   'next_followup_at', 'interaction_count', 'source', 'warm_or_cold',
   'mutual_connection', 'draft_message', 'archived_stage', 'linkedin_company_url',
+  'deal_value_usd', 'created_at',
 ].join(',')
 
 // Fields the client is permitted to PATCH onto a lead.
@@ -41,7 +42,7 @@ const EDITABLE_FIELDS = new Set([
   'instagram_url', 'next_followup_at', 'last_contacted_at', 'outreach_notes',
   'contact_name', 'contact_email', 'contact_title', 'phone',
   'warm_or_cold', 'mutual_connection', 'draft_message', 'business_name',
-  'business_type', 'city', 'state', 'interaction_count',
+  'business_type', 'city', 'state', 'interaction_count', 'deal_value_usd',
 ])
 
 const supaHeaders = (extra = {}) => ({
@@ -96,6 +97,30 @@ export default async (req) => {
   try {
     // ---- GET: leads list, or one lead's activity timeline -----------------
     if (method === 'GET') {
+      // Activity summary for the Home tab: touches by type over the last 7 / 30 days
+      // and all-time since the v2 reset (2026-10-18).
+      if (url.searchParams.get('summary') === '1') {
+        const since = '2026-10-18T00:00:00Z'
+        const params = new URLSearchParams({
+          select: 'activity_type,created_at',
+          created_at: `gte.${since}`,
+          order: 'created_at.desc',
+        })
+        const res = await fetch(`${REST}/aces_lead_activities?${params.toString()}`, {
+          headers: supaHeaders({ Range: '0-4999', 'Range-Unit': 'items' }),
+        })
+        if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 160)}`)
+        const acts = await res.json()
+        const now = Date.now()
+        const bucket = (days) =>
+          acts.filter(
+            (a) =>
+              ['email', 'linkedin', 'call'].includes(a.activity_type) &&
+              now - new Date(a.created_at).getTime() <= days * 86400000,
+          ).length
+        const sendsAll = acts.filter((a) => ['email', 'linkedin', 'call'].includes(a.activity_type)).length
+        return json({ sends7d: bucket(7), sends30d: bucket(30), sendsAll, since })
+      }
       const leadId = url.searchParams.get('lead_id')
       if (leadId) {
         const params = new URLSearchParams({
