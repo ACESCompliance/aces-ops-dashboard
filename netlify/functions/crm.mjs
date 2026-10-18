@@ -31,7 +31,8 @@ const LEAD_COLUMNS = [
   'contact_email', 'contact_title', 'linkedin_url', 'lead_tier', 'lead_status',
   'email_quality', 'email_source', 'outreach_notes', 'first_name', 'last_name',
   'pipeline_stage', 'facebook_url', 'instagram_url', 'last_contacted_at',
-  'next_followup_at', 'interaction_count',
+  'next_followup_at', 'interaction_count', 'source', 'warm_or_cold',
+  'mutual_connection', 'draft_message', 'archived_stage', 'linkedin_company_url',
 ].join(',')
 
 // Fields the client is permitted to PATCH onto a lead.
@@ -39,6 +40,8 @@ const EDITABLE_FIELDS = new Set([
   'pipeline_stage', 'lead_status', 'linkedin_url', 'facebook_url',
   'instagram_url', 'next_followup_at', 'last_contacted_at', 'outreach_notes',
   'contact_name', 'contact_email', 'contact_title', 'phone',
+  'warm_or_cold', 'mutual_connection', 'draft_message', 'business_name',
+  'business_type', 'city', 'state', 'interaction_count',
 ])
 
 const supaHeaders = (extra = {}) => ({
@@ -52,11 +55,12 @@ function json(body, status = 200) {
 }
 
 // Page past PostgREST's 1000-row cap, selecting only the columns we need.
-async function fetchAll(table, columns, order) {
+async function fetchAll(table, columns, order, filters = {}) {
   const rows = []
   for (let from = 0; from < 50000; from += 1000) {
     const params = new URLSearchParams({ select: columns })
     if (order) params.set('order', order)
+    for (const [k, v] of Object.entries(filters)) params.set(k, v)
     const res = await fetch(`${REST}/${table}?${params.toString()}`, {
       headers: supaHeaders({ Range: `${from}-${from + 999}`, 'Range-Unit': 'items' }),
     })
@@ -106,8 +110,12 @@ export default async (req) => {
         return json({ activities: await res.json() })
       }
 
-      const leads = await fetchAll('aces_compliance_leads', LEAD_COLUMNS, 'created_at.desc')
-      return json({ leads, fetchedAt: new Date().toISOString() })
+      // v2 (Oct 2026): the 1,156 OSHA-era leads are tagged archived_v1 and
+      // hidden unless ?archived=1 is passed. Default view is the new pipeline only.
+      const includeArchived = url.searchParams.get('archived') === '1'
+      const filters = includeArchived ? {} : { pipeline_stage: 'neq.archived_v1' }
+      const leads = await fetchAll('aces_compliance_leads', LEAD_COLUMNS, 'created_at.desc', filters)
+      return json({ leads, fetchedAt: new Date().toISOString(), includeArchived })
     }
 
     // ---- POST: add an activity (password-protected) -----------------------
@@ -136,7 +144,7 @@ export default async (req) => {
 
       // Logging a real touch (call/email/meeting) advances the contact clock so
       // the "never contacted" and overdue lists stay accurate.
-      if (['call', 'email', 'meeting'].includes(activity_type)) {
+      if (['call', 'email', 'meeting', 'linkedin'].includes(activity_type)) {
         await fetch(`${REST}/aces_compliance_leads?id=eq.${lead_id}`, {
           method: 'PATCH',
           headers: supaHeaders({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),

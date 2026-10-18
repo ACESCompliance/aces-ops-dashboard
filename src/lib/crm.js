@@ -20,8 +20,9 @@ async function unwrap(res) {
   return res.json()
 }
 
-export async function fetchLeads() {
-  const res = await fetch(`${API_BASE}/api/crm`, { headers: keyHeaders() })
+export async function fetchLeads({ archived = false } = {}) {
+  const qs = archived ? '?archived=1' : ''
+  const res = await fetch(`${API_BASE}/api/crm${qs}`, { headers: keyHeaders() })
   return (await unwrap(res)).leads || []
 }
 
@@ -52,23 +53,30 @@ export async function updateLead(leadId, fields) {
 
 // ---- shared CRM config + helpers ----------------------------------------
 
+// v2 pipeline (Oct 2026): AI-adoption practice for multi-site manufacturers.
+// Day one = 'captured'. Nour sends every message himself; the lead agent only
+// drafts. 'archived_v1' holds the OSHA-era book and is hidden by default.
 export const STAGES = [
-  { key: 'new_lead', label: 'New Lead', color: '#64748B' },
-  { key: 'contacted', label: 'Contacted', color: '#60A5FA' },
-  { key: 'meeting_booked', label: 'Meeting Booked', color: '#A855F7' },
+  { key: 'captured', label: 'Captured', color: '#64748B' },
+  { key: 'messaged', label: 'Messaged', color: '#60A5FA' },
+  { key: 'replied', label: 'Replied', color: '#22D3EE' },
+  { key: 'session_held', label: 'Session Held', color: '#A855F7' },
   { key: 'proposal_sent', label: 'Proposal Sent', color: '#F59E0B' },
-  { key: 'free_audit_offered', label: 'Free Audit', color: '#F07316' },
-  { key: 'client_won', label: 'Client Won', color: '#16A34A' },
+  { key: 'won', label: 'Won', color: '#16A34A' },
   { key: 'lost', label: 'Lost', color: '#DC2626' },
-  // Not a loss — a lead that never should have been in the pipeline. Muted gray.
   { key: 'unqualified', label: 'Unqualified', color: '#6B7280' },
+  { key: 'archived_v1', label: 'Archived (v1)', color: '#475569' },
 ]
+
+// Stages where follow-up reminders no longer apply.
+export const CLOSED_STAGES = new Set(['won', 'lost', 'unqualified', 'archived_v1'])
 
 export const STAGE_BY_KEY = Object.fromEntries(STAGES.map((s) => [s.key, s]))
 
 export const ACTIVITY_TYPES = [
   { key: 'call', label: 'Call', icon: '📞' },
   { key: 'email', label: 'Email', icon: '✉️' },
+  { key: 'linkedin', label: 'LinkedIn msg', icon: '💬' },
   { key: 'meeting', label: 'Meeting', icon: '🤝' },
   { key: 'note', label: 'Note', icon: '📝' },
   { key: 'follow_up', label: 'Follow-up', icon: '🔔' },
@@ -97,5 +105,19 @@ export function completeness(l) {
 }
 
 export function stageOf(l) {
-  return l.pipeline_stage || 'new_lead'
+  return l.pipeline_stage || 'captured'
+}
+
+export function hasDraft(l) {
+  return Boolean(l.draft_message && l.draft_message.trim())
+}
+
+// First message is pre-filled into the user's own mail client; nothing is sent
+// by the dashboard itself.
+export function mailtoFor(l) {
+  if (!l.contact_email) return null
+  const first = (l.first_name || leadName(l).split(' ')[0] || '').trim()
+  const subject = encodeURIComponent(`Quick question about your supervisors' admin load${l.business_name ? ' at ' + l.business_name : ''}`)
+  const body = encodeURIComponent((l.draft_message || `Hi ${first},\n\n`).replace(/\r/g, ''))
+  return `mailto:${l.contact_email}?subject=${subject}&body=${body}`
 }

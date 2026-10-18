@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchLeads, STAGES, stageOf, hasEmail } from '../../lib/crm'
+import { fetchLeads, STAGES, CLOSED_STAGES, stageOf, hasDraft } from '../../lib/crm'
 import TodaysActions from './TodaysActions'
 import Pipeline from './Pipeline'
 import LeadTable from './LeadTable'
@@ -20,19 +20,20 @@ export default function CRM() {
   const [error, setError] = useState(null)
   const [view, setView] = useState('today')
   const [selected, setSelected] = useState(null)
+  const [showArchived, setShowArchived] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      setLeads(await fetchLeads())
+      setLeads(await fetchLeads({ archived: showArchived }))
     } catch (e) {
       console.error(e)
       setError(e.message || 'Failed to load CRM leads')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [showArchived])
 
   useEffect(() => {
     load()
@@ -47,32 +48,31 @@ export default function CRM() {
   const stats = useMemo(() => {
     const rows = leads || []
     const counts = Object.fromEntries(STAGES.map((s) => [s.key, 0]))
-    let withEmail = 0
+    let ready = 0
     let overdue = 0
     const now = Date.now()
     for (const l of rows) {
       counts[stageOf(l)] = (counts[stageOf(l)] || 0) + 1
-      if (hasEmail(l)) withEmail += 1
+      if (stageOf(l) === 'captured' && hasDraft(l) && !l.last_contacted_at) ready += 1
       if (
         l.next_followup_at &&
         new Date(l.next_followup_at).getTime() <= now &&
-        stageOf(l) !== 'client_won' &&
-        stageOf(l) !== 'lost' &&
-        stageOf(l) !== 'unqualified'
+        !CLOSED_STAGES.has(stageOf(l))
       )
         overdue += 1
     }
-    return { total: rows.length, withEmail, overdue, won: counts.client_won || 0 }
+    const active = rows.filter((l) => stageOf(l) !== 'archived_v1').length
+    return { total: active, ready, overdue, won: counts.won || 0, sessions: counts.session_held || 0 }
   }, [leads])
 
   return (
     <div className="space-y-5">
       {/* Summary strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Total Leads" value={stats.total} />
-        <Stat label="With Email" value={stats.withEmail} accent="#16A34A" />
+        <Stat label="Active Contacts" value={stats.total} />
+        <Stat label="Ready to Send" value={stats.ready} accent="#16A34A" />
         <Stat label="Overdue Follow-ups" value={stats.overdue} accent="#DC2626" />
-        <Stat label="Clients Won" value={stats.won} accent="#F07316" />
+        <Stat label="Sessions Held" value={stats.sessions} accent="#A855F7" />
       </div>
 
       {/* View switcher + refresh */}
@@ -92,9 +92,19 @@ export default function CRM() {
             </button>
           ))}
         </div>
-        <button onClick={load} disabled={loading} className="btn">
-          {loading ? 'Loading…' : 'Refresh'}
-        </button>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-xs text-muted">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+            />
+            Show archived (v1)
+          </label>
+          <button onClick={load} disabled={loading} className="btn">
+            {loading ? 'Loading…' : 'Refresh'}
+          </button>
+        </div>
       </div>
 
       {error && (

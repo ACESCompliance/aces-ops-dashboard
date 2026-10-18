@@ -1,33 +1,30 @@
-import { leadName, hasEmail, stageOf, STAGE_BY_KEY } from '../../lib/crm'
+import { leadName, hasDraft, stageOf, STAGE_BY_KEY, CLOSED_STAGES } from '../../lib/crm'
 import { shortDate, daysSince } from '../../lib/format'
 
-// Two action lists: follow-ups that are due/overdue, and email-reachable leads
-// that have never been contacted. Both are the founder's "do this now" queue.
+// Two action lists: follow-ups that are due/overdue, and captured contacts with
+// a drafted first message that Nour has not sent yet. Daily target: 10 sends.
 export default function TodaysActions({ leads, onSelect }) {
   const now = Date.now()
 
   const overdue = leads
     .filter((l) => {
       const t = l.next_followup_at ? new Date(l.next_followup_at).getTime() : NaN
-      return (
-        !isNaN(t) &&
-        t <= now &&
-        stageOf(l) !== 'client_won' &&
-        stageOf(l) !== 'lost' &&
-        stageOf(l) !== 'unqualified'
-      )
+      return !isNaN(t) && t <= now && !CLOSED_STAGES.has(stageOf(l))
     })
     .sort((a, b) => new Date(a.next_followup_at) - new Date(b.next_followup_at))
 
-  const uncontacted = leads
-    .filter(
-      (l) =>
-        hasEmail(l) &&
-        !l.last_contacted_at &&
-        stageOf(l) === 'new_lead' &&
-        !(Number(l.interaction_count) > 0),
-    )
+  // Warm contacts first, then by capture date.
+  const ready = leads
+    .filter((l) => stageOf(l) === 'captured' && !l.last_contacted_at && hasDraft(l))
+    .sort((a, b) => {
+      const w = (x) => (x.warm_or_cold === 'warm' ? 0 : 1)
+      return w(a) - w(b) || new Date(a.created_at || 0) - new Date(b.created_at || 0)
+    })
     .slice(0, 30)
+
+  const needsDraft = leads.filter(
+    (l) => stageOf(l) === 'captured' && !l.last_contacted_at && !hasDraft(l),
+  ).length
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -50,15 +47,25 @@ export default function TodaysActions({ leads, onSelect }) {
       </ActionCard>
 
       <ActionCard
-        title="Emails · Never Contacted"
-        count={uncontacted.length}
+        title="Ready to Send · Today's 10"
+        count={ready.length}
         accent="#16A34A"
-        empty="Every reachable lead has been touched."
+        empty={
+          needsDraft > 0
+            ? `${needsDraft} captured contact${needsDraft === 1 ? '' : 's'} waiting on a draft from the lead agent.`
+            : 'Nothing drafted. Capture more contacts or wait for the morning lead run.'
+        }
       >
-        {uncontacted.map((l) => (
+        {ready.map((l) => (
           <Row key={l.id} lead={l} onSelect={onSelect}>
-            <span className="max-w-[40%] truncate text-xs text-accent2" title={l.contact_email}>
-              {l.contact_email}
+            <span
+              className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold"
+              style={{
+                backgroundColor: l.warm_or_cold === 'warm' ? '#F0731622' : '#64748B22',
+                color: l.warm_or_cold === 'warm' ? '#F07316' : '#94A3B8',
+              }}
+            >
+              {l.warm_or_cold === 'warm' ? 'warm' : 'cold'}
             </span>
           </Row>
         ))}

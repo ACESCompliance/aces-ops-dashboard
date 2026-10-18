@@ -5,6 +5,7 @@ import {
   ACTIVITY_BY_KEY,
   leadName,
   stageOf,
+  mailtoFor,
   fetchActivities,
   addActivity,
   updateLead,
@@ -23,6 +24,12 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
   const [stage, setStage] = useState(stageOf(lead))
   const [followup, setFollowup] = useState(toDateInput(lead.next_followup_at))
   const [notes, setNotes] = useState(lead.outreach_notes || '')
+  const [draft, setDraft] = useState(lead.draft_message || '')
+  const [fit, setFit] = useState({
+    warm_or_cold: lead.warm_or_cold || '',
+    mutual_connection: lead.mutual_connection || '',
+  })
+  const [copied, setCopied] = useState(false)
   const [social, setSocial] = useState({
     linkedin_url: lead.linkedin_url || '',
     facebook_url: lead.facebook_url || '',
@@ -83,6 +90,49 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
 
   async function onSaveSocial() {
     await patch({ ...social }, { ...social })
+  }
+
+  async function onSaveDraft() {
+    await patch({ draft_message: draft }, { draft_message: draft })
+  }
+
+  async function onSaveFit() {
+    await patch({ ...fit }, { ...fit })
+  }
+
+  async function onCopyDraft() {
+    try {
+      await navigator.clipboard.writeText(draft)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* clipboard blocked; user can select-all */
+    }
+  }
+
+  // "I sent it": log the touch, move to Messaged, schedule a 3-day follow-up.
+  async function onMarkSent(channel) {
+    setSaving(true)
+    setErr(null)
+    try {
+      const created = await addActivity(id, channel, draft ? draft.slice(0, 280) : 'First message sent')
+      if (created) setActivities((a) => [created, ...a])
+      const nowIso = new Date().toISOString()
+      const next = new Date(Date.now() + 3 * 86400000).toISOString()
+      const fields = {
+        pipeline_stage: 'messaged',
+        next_followup_at: next,
+        interaction_count: (Number(lead.interaction_count) || 0) + 1,
+      }
+      const updated = await updateLead(id, fields)
+      setStage('messaged')
+      setFollowup(next.slice(0, 10))
+      onUpdated({ ...lead, ...fields, last_contacted_at: nowIso, ...(updated || {}) })
+    } catch (e) {
+      setErr(e.message || 'Could not mark as sent')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function onAddActivity(e) {
@@ -160,6 +210,93 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
               ))}
             </select>
           </Field>
+
+          {/* First message — drafted by the lead agent, edited and sent by Nour */}
+          <Section
+            title="First Message"
+            action={
+              <button onClick={onSaveDraft} disabled={saving} className="link-btn">
+                Save
+              </button>
+            }
+          >
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              rows={7}
+              placeholder="No draft yet. The morning lead run fills this in, or write your own."
+              className="input resize-y text-sm"
+            />
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button onClick={onCopyDraft} disabled={!draft} className="btn">
+                {copied ? 'Copied ✓' : 'Copy'}
+              </button>
+              {mailtoFor({ ...lead, draft_message: draft }) && (
+                <a href={mailtoFor({ ...lead, draft_message: draft })} className="btn">
+                  Open in Email
+                </a>
+              )}
+              {lead.linkedin_url && (
+                <a href={ensureHttp(lead.linkedin_url)} target="_blank" rel="noreferrer" className="btn">
+                  Open LinkedIn
+                </a>
+              )}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                onClick={() => onMarkSent('email')}
+                disabled={saving}
+                className="btn flex-1 justify-center"
+                style={{ backgroundColor: '#16A34A22', color: '#16A34A' }}
+              >
+                Mark sent · Email
+              </button>
+              <button
+                onClick={() => onMarkSent('linkedin')}
+                disabled={saving}
+                className="btn flex-1 justify-center"
+                style={{ backgroundColor: '#60A5FA22', color: '#60A5FA' }}
+              >
+                Mark sent · LinkedIn
+              </button>
+            </div>
+            <div className="mt-1 text-[11px] text-muted">
+              Marking sent moves this contact to Messaged and sets a follow-up in 3 days.
+            </div>
+          </Section>
+
+          {/* Fit */}
+          <Section
+            title="Fit"
+            action={
+              <button onClick={onSaveFit} disabled={saving} className="link-btn">
+                Save
+              </button>
+            }
+          >
+            <div className="mb-2">
+              <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted">Warm or cold</label>
+              <select
+                value={fit.warm_or_cold}
+                onChange={(e) => setFit((f) => ({ ...f, warm_or_cold: e.target.value }))}
+                className="input"
+              >
+                <option value="">—</option>
+                <option value="warm">Warm (knows me)</option>
+                <option value="cold">Cold</option>
+              </select>
+            </div>
+            <div className="mb-1">
+              <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted">Mutual connection</label>
+              <input
+                value={fit.mutual_connection}
+                onChange={(e) => setFit((f) => ({ ...f, mutual_connection: e.target.value }))}
+                placeholder="Who can introduce you"
+                className="input"
+              />
+            </div>
+            <Info label="Source" value={lead.source || '—'} />
+          </Section>
 
           {/* Contact info */}
           <Section title="Contact">
