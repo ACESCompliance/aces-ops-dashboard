@@ -112,6 +112,7 @@ export default async (req) => {
     compLeads,
     digiLeads,
     workflowRuns,
+    outreach,
     contacts,
     oshaCount,
   ] = await Promise.all([
@@ -156,6 +157,14 @@ export default async (req) => {
       'id,workflow_name,run_started_at,run_completed_at,success,compliance_leads_added,digital_leads_added,total_searched,city_pair,error_message,apollo_calls_made,apollo_names_found,apollo_emails_found,hunter_calls_made,hunter_emails_found,enterprise_flagged,amazon_blocked,bigbox_blocked,created_at',
       { order: 'run_started_at.desc' },
     ),
+    // Outreach queue — drafts written by the outreach agent, approved by Nour,
+    // sent by the n8n Auto-Sender. Bodies included so the dashboard can show
+    // exactly what a prospect received.
+    fetchTable(
+      'outreach_queue',
+      'id,lead_id,recipient_email,recipient_name,business_name,email_subject,email_body,channel,status,rejection_reason,draft_type,touch_number,created_at,approved_at,sent_at,error_message',
+      { order: 'created_at.desc' },
+    ),
     // Website consultation + scorecard submissions captured by the marketing
     // site (aces-website) directly into Supabase.
     fetchTable(
@@ -192,6 +201,7 @@ export default async (req) => {
     compLeads: compLeads.rows,
     digiLeads: digiLeads.rows,
     workflowRuns: workflowRuns.rows,
+    outreach: outreach.error ? [] : outreach.rows,
     contacts: contacts.error ? [] : contacts.rows,
     oshaStandards: oshaCount.count ?? 0,
     health,
@@ -206,6 +216,7 @@ export default async (req) => {
       compLeads: compLeads.error,
       digiLeads: digiLeads.error,
       workflowRuns: workflowRuns.error,
+      outreach: outreach.error,
       contacts: contacts.error,
     },
   }
