@@ -6,6 +6,9 @@ import {
   leadName,
   hasEmail,
   completeness,
+  SEND_CHANNELS,
+  CHANNEL_BY_KEY,
+  STEP_SHORT,
 } from '../../lib/crm'
 import { shortDate, titleize } from '../../lib/format'
 
@@ -16,12 +19,17 @@ const COLUMNS = [
   { key: 'contact_email', label: 'Email' },
   { key: 'phone', label: 'Phone' },
   { key: 'pipeline_stage', label: 'Stage' },
-  { key: 'last_contacted_at', label: 'Last Contacted' },
+  { key: 'reached', label: 'Reached On' },
+  { key: 'last_contacted_at', label: 'Last Touch' },
   { key: 'next_followup_at', label: 'Next Follow-up' },
 ]
 
-function sortValue(l, key) {
+const EMPTY_TOUCH = { byChannel: {}, byChannelStep: {}, steps: new Set(), last: null, reply: null, sends: 0 }
+
+function sortValue(l, key, t) {
   switch (key) {
+    case 'reached':
+      return t.sends
     case 'name':
       return leadName(l).toLowerCase()
     case 'pipeline_stage':
@@ -34,11 +42,15 @@ function sortValue(l, key) {
   }
 }
 
-export default function LeadTable({ leads, onSelect }) {
+export default function LeadTable({ leads, onSelect, touchMap, initialChannel = 'all' }) {
   const [stage, setStage] = useState('all')
   const [emailFilter, setEmailFilter] = useState('all')
   const [tier, setTier] = useState('all')
   const [query, setQuery] = useState('')
+  const [channel, setChannel] = useState(initialChannel)
+  const [stepF, setStepF] = useState('all')
+  const [replied, setReplied] = useState('all')
+  const touchOf = (l) => touchMap?.get(l.id) || EMPTY_TOUCH
   // Default: most complete leads (email + name) first.
   const [sort, setSort] = useState({ key: 'completeness', dir: 'desc' })
 
@@ -54,6 +66,18 @@ export default function LeadTable({ leads, onSelect }) {
       if (emailFilter === 'has' && !hasEmail(l)) return false
       if (emailFilter === 'no' && hasEmail(l)) return false
       if (tier !== 'all' && l.lead_tier !== tier) return false
+      const t = touchOf(l)
+      if (channel === 'none' && t.sends > 0) return false
+      if (channel === 'multi' && Object.keys(t.byChannel).length < 2) return false
+      if (!['all', 'none', 'multi'].includes(channel) && !t.byChannel[channel]) return false
+      if (stepF !== 'all') {
+        const has = channel !== 'all' && !['none', 'multi'].includes(channel)
+          ? Boolean(t.byChannelStep[`${channel}:${stepF}`])
+          : t.steps.has(stepF)
+        if (!has) return false
+      }
+      if (replied === 'yes' && !t.reply) return false
+      if (replied === 'no' && t.reply) return false
       if (q) {
         const hay = [l.business_name, l.city, leadName(l), l.contact_email]
           .filter(Boolean)
@@ -70,14 +94,15 @@ export default function LeadTable({ leads, onSelect }) {
         cmp = completeness(a) - completeness(b)
         if (cmp === 0) cmp = (a.business_name || '').localeCompare(b.business_name || '')
       } else {
-        const va = sortValue(a, sort.key)
-        const vb = sortValue(b, sort.key)
+        const va = sortValue(a, sort.key, touchOf(a))
+        const vb = sortValue(b, sort.key, touchOf(b))
         cmp = va < vb ? -1 : va > vb ? 1 : 0
       }
       return sort.dir === 'asc' ? cmp : -cmp
     })
     return rows
-  }, [leads, stage, emailFilter, tier, query, sort])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leads, stage, emailFilter, tier, query, sort, channel, stepF, replied, touchMap])
 
   const toggleSort = (key) =>
     setSort((s) =>
@@ -114,6 +139,27 @@ export default function LeadTable({ leads, onSelect }) {
               {titleize(t)}
             </option>
           ))}
+        </Select>
+        <Select value={channel} onChange={setChannel} label="Channel">
+          <option value="all">Any channel</option>
+          {SEND_CHANNELS.map((c) => (
+            <option key={c.key} value={c.key}>
+              Reached on {c.label}
+            </option>
+          ))}
+          <option value="multi">Reached on 2+ channels</option>
+          <option value="none">Not reached yet</option>
+        </Select>
+        <Select value={stepF} onChange={setStepF} label="Step">
+          <option value="all">Any step</option>
+          <option value="first">Got first message</option>
+          <option value="fu1">Got follow-up 1</option>
+          <option value="fu2">Got follow-up 2</option>
+        </Select>
+        <Select value={replied} onChange={setReplied} label="Replied">
+          <option value="all">Replied or not</option>
+          <option value="yes">Replied</option>
+          <option value="no">No reply yet</option>
         </Select>
         <span className="ml-auto text-xs text-muted">{filtered.length} leads</span>
       </div>
@@ -171,7 +217,17 @@ export default function LeadTable({ leads, onSelect }) {
                       </span>
                     )}
                   </td>
-                  <td className="td text-muted">{shortDate(l.last_contacted_at)}</td>
+                  <td className="td">
+                    <ReachedChips t={touchOf(l)} />
+                  </td>
+                  <td className="td whitespace-nowrap text-muted">
+                    {touchOf(l).last && (
+                      <span className="mr-1" title={CHANNEL_BY_KEY[touchOf(l).last.channel]?.label}>
+                        {CHANNEL_BY_KEY[touchOf(l).last.channel]?.icon}
+                      </span>
+                    )}
+                    {shortDate(l.last_contacted_at)}
+                  </td>
                   <td className={`td ${overdue ? 'text-bad' : 'text-muted'}`}>
                     {shortDate(l.next_followup_at)}
                   </td>
@@ -194,6 +250,38 @@ export default function LeadTable({ leads, onSelect }) {
         )}
       </div>
     </div>
+  )
+}
+
+// Small per-channel chips: icon, sends on that channel, and the furthest step
+// reached there. A reply shows as a cyan tag with the channel it came in on.
+export function ReachedChips({ t }) {
+  const chans = SEND_CHANNELS.filter((c) => t.byChannel[c.key])
+  if (!chans.length && !t.reply) return <span className="text-muted">—</span>
+  const furthest = (key) =>
+    ['fu2', 'fu1', 'first', 'other'].find((s) => t.byChannelStep[`${key}:${s}`])
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {chans.map((c) => (
+        <span
+          key={c.key}
+          title={`${c.label}: ${t.byChannel[c.key]} sent`}
+          className="whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-semibold"
+          style={{ backgroundColor: `${c.color}22`, color: c.color }}
+        >
+          {c.icon} {STEP_SHORT[furthest(c.key)] || t.byChannel[c.key]}
+        </span>
+      ))}
+      {t.reply && (
+        <span
+          title={`Replied via ${CHANNEL_BY_KEY[t.reply.channel]?.label || 'unknown'}`}
+          className="whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-semibold"
+          style={{ backgroundColor: '#22D3EE22', color: '#22D3EE' }}
+        >
+          ↩ {CHANNEL_BY_KEY[t.reply.channel]?.icon || ''}
+        </span>
+      )}
+    </span>
   )
 }
 

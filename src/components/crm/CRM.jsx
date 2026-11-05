@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchLeads, STAGES, CLOSED_STAGES, stageOf, hasDraft } from '../../lib/crm'
+import { fetchLeads, fetchTouches, touchesByLead, STAGES, CLOSED_STAGES, stageOf, hasDraft } from '../../lib/crm'
 import TodaysActions from './TodaysActions'
 import Pipeline from './Pipeline'
 import LeadTable from './LeadTable'
 import LeadDetail from './LeadDetail'
+import Channels from './Channels'
 
 const VIEWS = [
   { key: 'today', label: "Today's Actions" },
   { key: 'pipeline', label: 'Pipeline' },
   { key: 'table', label: 'Lead Table' },
+  { key: 'channels', label: 'By Channel' },
 ]
 
 // Self-contained CRM workspace. Owns its own lead fetch (the CRM columns) so the
@@ -21,12 +23,22 @@ export default function CRM() {
   const [view, setView] = useState('today')
   const [selected, setSelected] = useState(null)
   const [showArchived, setShowArchived] = useState(false)
+  const [touches, setTouches] = useState([])
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      setLeads(await fetchLeads({ archived: showArchived }))
+      const [ls, ts] = await Promise.all([
+        fetchLeads({ archived: showArchived }),
+        // Channel data is a bonus; never let it block the lead list.
+        fetchTouches().catch((e) => {
+          console.error(e)
+          return []
+        }),
+      ])
+      setLeads(ls)
+      setTouches(ts)
     } catch (e) {
       console.error(e)
       setError(e.message || 'Failed to load CRM leads')
@@ -44,6 +56,13 @@ export default function CRM() {
     setLeads((prev) => (prev ? prev.map((l) => (l.id === updated.id ? { ...l, ...updated } : l)) : prev))
     setSelected((cur) => (cur && cur.id === updated.id ? { ...cur, ...updated } : cur))
   }, [])
+
+  // A new send or reply logged in the detail panel updates the channel views live.
+  const handleActivity = useCallback((a) => {
+    if (a && ['outbound', 'inbound'].includes(a.direction)) setTouches((prev) => [...prev, a])
+  }, [])
+
+  const touchMap = useMemo(() => touchesByLead(touches), [touches])
 
   const stats = useMemo(() => {
     const rows = leads || []
@@ -121,7 +140,8 @@ export default function CRM() {
         <>
           {view === 'today' && <TodaysActions leads={leads} onSelect={setSelected} />}
           {view === 'pipeline' && <Pipeline leads={leads} onSelect={setSelected} />}
-          {view === 'table' && <LeadTable leads={leads} onSelect={setSelected} />}
+          {view === 'table' && <LeadTable leads={leads} onSelect={setSelected} touchMap={touchMap} />}
+          {view === 'channels' && <Channels leads={leads} touches={touches} onSelect={setSelected} />}
         </>
       )}
 
@@ -130,6 +150,7 @@ export default function CRM() {
           lead={selected}
           onClose={() => setSelected(null)}
           onUpdated={handleUpdated}
+          onActivity={handleActivity}
         />
       )}
     </div>

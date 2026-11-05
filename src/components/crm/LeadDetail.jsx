@@ -3,9 +3,15 @@ import {
   STAGES,
   ACTIVITY_TYPES,
   ACTIVITY_BY_KEY,
+  CHANNELS,
+  CHANNEL_BY_KEY,
+  SEND_CHANNELS,
+  SEND_TYPES,
+  STEP_LABEL,
   leadName,
   stageOf,
   mailtoFor,
+  messageStep,
   fetchActivities,
   addActivity,
   updateLead,
@@ -14,7 +20,7 @@ import { relativeTime, shortDate, titleize } from '../../lib/format'
 
 // Slide-out panel for a single lead. Edits PATCH the lead via the API and bubble
 // the updated row up through onUpdated so the board/table stay in sync.
-export default function LeadDetail({ lead, onClose, onUpdated }) {
+export default function LeadDetail({ lead, onClose, onUpdated, onActivity }) {
   const [activities, setActivities] = useState([])
   const [loadingActs, setLoadingActs] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -37,9 +43,21 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
     instagram_url: lead.instagram_url || '',
   })
 
+  // Which channels this message went out on. One step can go out on several
+  // channels (email + LinkedIn the same day) and still count as one step.
+  const [sendChannels, setSendChannels] = useState(() =>
+    lead.contact_email ? ['email'] : lead.linkedin_url ? ['linkedin'] : [],
+  )
+  // "They replied" form.
+  const [replyChannel, setReplyChannel] = useState(
+    lead.contact_email ? 'email' : lead.linkedin_url ? 'linkedin' : 'phone',
+  )
+  const [replyText, setReplyText] = useState('')
+
   // Add-activity form.
   const [actType, setActType] = useState('call')
   const [actText, setActText] = useState('')
+  const [actChannel, setActChannel] = useState('email')
 
   const id = lead.id
 
@@ -111,26 +129,81 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
     }
   }
 
-  // "I sent it": log the touch, move to Messaged, schedule a 3-day follow-up.
-  async function onMarkSent(channel) {
+  // "I sent it": log the full message, advance the sequence, clear the box for
+  // the next draft, and schedule the next follow-up (or none after the last one).
+  const step = messageStep(lead)
+
+  const stepKey = ['first', 'fu1', 'fu2'].includes(step.key) ? step.key : 'other'
+
+  function toggleSendChannel(key) {
+    setSendChannels((cur) => (cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key]))
+  }
+
+  function pushActivity(created) {
+    if (!created) return
+    setActivities((a) => [created, ...a])
+    onActivity?.(created)
+  }
+
+  async function onMarkSent() {
+    if (!sendChannels.length) {
+      setErr('Pick the channel(s) you sent this on first.')
+      return
+    }
     setSaving(true)
     setErr(null)
     try {
-      const created = await addActivity(id, channel, draft ? draft.slice(0, 280) : 'First message sent')
-      if (created) setActivities((a) => [created, ...a])
-      const nowIso = new Date().toISOString()
-      const next = new Date(Date.now() + 3 * 86400000).toISOString()
-      const fields = {
-        pipeline_stage: 'messaged',
-        next_followup_at: next,
-        interaction_count: (Number(lead.interaction_count) || 0) + 1,
+      const text = draft && draft.trim() ? `${step.sentLabel}:\n\n${draft.trim()}` : step.sentLabel
+      // One activity per channel, all tagged with the same step.
+      for (const ch of sendChannels) {
+        const meta = CHANNEL_BY_KEY[ch]
+        const created = await addActivity(id, meta.activity, text, {
+          channel: ch,
+          direction: 'outbound',
+          step: stepKey,
+        })
+        pushActivity(created)
       }
+      const nowIso = new Date().toISOString()
+      const next = step.nextDays ? new Date(Date.now() + step.nextDays * 86400000).toISOString() : null
+      const currentStage = stageOf(lead)
+      const fields = {
+        interaction_count: (Number(lead.interaction_count) || 0) + 1,
+        next_followup_at: next || '',
+        draft_message: '',
+      }
+      if (['captured', 'needs_manual'].includes(currentStage)) fields.pipeline_stage = 'messaged'
       const updated = await updateLead(id, fields)
-      setStage('messaged')
-      setFollowup(next.slice(0, 10))
-      onUpdated({ ...lead, ...fields, last_contacted_at: nowIso, ...(updated || {}) })
+      if (fields.pipeline_stage) setStage('messaged')
+      setFollowup(next ? next.slice(0, 10) : '')
+      setDraft('')
+      onUpdated({ ...lead, ...fields, next_followup_at: next, draft_message: '', last_contacted_at: nowIso, ...(updated || {}) })
     } catch (e) {
       setErr(e.message || 'Could not mark as sent')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // They wrote back: log it inbound on the channel it came in on, move the
+  // contact to Replied and stop the follow-up clock.
+  async function onReplyReceived() {
+    setSaving(true)
+    setErr(null)
+    try {
+      const label = CHANNEL_BY_KEY[replyChannel]?.label || replyChannel
+      const text = replyText.trim() || `Replied via ${label}`
+      const created = await addActivity(id, 'reply', text, { channel: replyChannel, direction: 'inbound' })
+      pushActivity(created)
+      const fields = { next_followup_at: '' }
+      if (['captured', 'messaged', 'needs_manual'].includes(stageOf(lead))) fields.pipeline_stage = 'replied'
+      const updated = await updateLead(id, fields)
+      if (fields.pipeline_stage) setStage('replied')
+      setFollowup('')
+      setReplyText('')
+      onUpdated({ ...lead, ...fields, next_followup_at: null, ...(updated || {}) })
+    } catch (e) {
+      setErr(e.message || 'Could not log the reply')
     } finally {
       setSaving(false)
     }
@@ -142,11 +215,12 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
     setSaving(true)
     setErr(null)
     try {
-      const created = await addActivity(id, actType, actText.trim())
-      if (created) setActivities((a) => [created, ...a])
+      const extra = ['reply', 'meeting'].includes(actType) ? { channel: actChannel } : {}
+      const created = await addActivity(id, actType, actText.trim(), extra)
+      pushActivity(created)
       setActText('')
       // Real touches bump last_contacted_at server-side; reflect that locally.
-      if (['call', 'email', 'meeting'].includes(actType)) {
+      if (SEND_TYPES.has(actType) || actType === 'meeting') {
         const nowIso = new Date().toISOString()
         onUpdated({ ...lead, last_contacted_at: nowIso })
       }
@@ -212,9 +286,10 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
             </select>
           </Field>
 
-          {/* First message — drafted by the lead agent, edited and sent by Nour */}
+          {/* Outreach message — first message, then numbered follow-ups. Drafted by
+              the lead agent, edited and sent by Nour. */}
           <Section
-            title="First Message"
+            title={step.title}
             action={
               <button onClick={onSaveDraft} disabled={saving} className="link-btn">
                 Save
@@ -225,7 +300,13 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               rows={7}
-              placeholder="No draft yet. The morning lead run fills this in, or write your own."
+              placeholder={
+                step.key === 'first'
+                  ? 'No draft yet. The morning lead run fills this in, or write your own.'
+                  : step.key === 'fu1' || step.key === 'fu2'
+                    ? `${step.title} is drafted by the morning lead run on the follow-up date${lead.next_followup_at ? ` (${shortDate(lead.next_followup_at)})` : ''}, or write your own.`
+                    : 'Write your message here.'
+              }
               className="input resize-y text-sm"
             />
             <div className="mt-2 flex flex-wrap gap-2">
@@ -243,26 +324,75 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
                 </a>
               )}
             </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                onClick={() => onMarkSent('email')}
-                disabled={saving}
-                className="btn flex-1 justify-center"
-                style={{ backgroundColor: '#16A34A22', color: '#16A34A' }}
-              >
-                Mark sent · Email
-              </button>
-              <button
-                onClick={() => onMarkSent('linkedin')}
-                disabled={saving}
-                className="btn flex-1 justify-center"
-                style={{ backgroundColor: '#60A5FA22', color: '#60A5FA' }}
-              >
-                Mark sent · LinkedIn
-              </button>
+            <div className="mt-3 text-[11px] uppercase tracking-wider text-muted">Sent on</div>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {SEND_CHANNELS.map((c) => {
+                const on = sendChannels.includes(c.key)
+                return (
+                  <button
+                    key={c.key}
+                    type="button"
+                    onClick={() => toggleSendChannel(c.key)}
+                    aria-pressed={on}
+                    className="rounded-full border px-2.5 py-1 text-xs font-medium transition-colors"
+                    style={
+                      on
+                        ? { borderColor: c.color, backgroundColor: `${c.color}22`, color: c.color }
+                        : { borderColor: 'rgba(148,163,184,.35)', color: 'rgb(148,163,184)' }
+                    }
+                  >
+                    {on ? '✓ ' : ''}
+                    {c.icon} {c.label}
+                  </button>
+                )
+              })}
             </div>
+            <button
+              onClick={onMarkSent}
+              disabled={saving || !sendChannels.length}
+              className="btn mt-2 w-full justify-center"
+              style={{ backgroundColor: '#16A34A22', color: '#16A34A' }}
+            >
+              Mark {step.key === 'first' || step.key === 'fu1' || step.key === 'fu2' ? STEP_LABEL[step.key].toLowerCase() : 'message'} sent
+              {sendChannels.length ? ` · ${sendChannels.map((k) => CHANNEL_BY_KEY[k].label).join(' + ')}` : ''}
+            </button>
             <div className="mt-1 text-[11px] text-muted">
-              Marking sent moves this contact to Messaged and sets a follow-up in 3 days.
+              {step.help}
+            </div>
+          </Section>
+
+          {/* They replied */}
+          <Section title="They Replied">
+            <div className="flex gap-2">
+              <select
+                value={replyChannel}
+                onChange={(e) => setReplyChannel(e.target.value)}
+                className="input w-36 shrink-0"
+                aria-label="Reply came in on"
+              >
+                {CHANNELS.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.icon} {c.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                placeholder="What did they say? (optional)"
+                className="input flex-1"
+              />
+            </div>
+            <button
+              onClick={onReplyReceived}
+              disabled={saving}
+              className="btn mt-2 w-full justify-center"
+              style={{ backgroundColor: '#22D3EE22', color: '#22D3EE' }}
+            >
+              Log reply · {CHANNEL_BY_KEY[replyChannel]?.label}
+            </button>
+            <div className="mt-1 text-[11px] text-muted">
+              Moves them to Replied and stops the follow-up clock.
             </div>
           </Section>
 
@@ -457,6 +587,20 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
                   className="input flex-1"
                 />
               </div>
+              {['reply', 'meeting'].includes(actType) && (
+                <select
+                  value={actChannel}
+                  onChange={(e) => setActChannel(e.target.value)}
+                  className="input"
+                  aria-label="Channel"
+                >
+                  {CHANNELS.map((c) => (
+                    <option key={c.key} value={c.key}>
+                      {actType === 'reply' ? 'Came in on' : 'Held'}: {c.icon} {c.label}
+                    </option>
+                  ))}
+                </select>
+              )}
               <button type="submit" disabled={saving} className="btn w-full justify-center">
                 {saving ? 'Saving…' : 'Add Activity'}
               </button>
@@ -478,8 +622,9 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
                       <div className="mt-0.5 text-base leading-none">{meta?.icon || '•'}</div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-medium text-ink">
+                          <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium text-ink">
                             {meta?.label || titleize(a.activity_type)}
+                            <TouchBadges a={a} />
                           </span>
                           <span className="shrink-0 text-[11px] text-muted">
                             {relativeTime(a.created_at)}
@@ -501,6 +646,24 @@ export default function LeadDetail({ lead, onClose, onUpdated }) {
       </div>
     </div>
   )
+}
+
+// Channel, step and direction tags on a timeline entry.
+function TouchBadges({ a }) {
+  const ch = a.channel && CHANNEL_BY_KEY[a.channel]
+  const tags = []
+  if (ch && a.direction !== 'internal') tags.push({ text: `${a.direction === 'inbound' ? 'via ' : ''}${ch.label}`, color: ch.color })
+  if (a.step && a.direction === 'outbound') tags.push({ text: STEP_LABEL[a.step] || a.step, color: '#94A3B8' })
+  if (a.direction === 'inbound') tags.push({ text: 'Inbound', color: '#22D3EE' })
+  return tags.map((t) => (
+    <span
+      key={t.text}
+      className="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+      style={{ backgroundColor: `${t.color}22`, color: t.color }}
+    >
+      {t.text}
+    </span>
+  ))
 }
 
 function Field({ label, action, children }) {

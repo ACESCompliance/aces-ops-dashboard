@@ -5,10 +5,14 @@
 //
 //   GET  /api/crm                  → { leads: [...] }            (all CRM leads)
 //   GET  /api/crm?lead_id=<uuid>   → { activities: [...] }       (timeline for a lead)
+//   GET  /api/crm?touches=1        → { touches: [...] }          (every outreach touch and reply since the v2 reset)
 //   POST /api/crm                  → add an activity             (password-protected)
 //   PUT  /api/crm                  → update lead fields          (password-protected)
 //
-// POST body: { lead_id, activity_type, description }
+// POST body: { lead_id, activity_type, description, channel?, direction?, step? }
+//   channel: email | linkedin | phone | text | in_person | other
+//   direction: outbound | inbound | internal; step: first | fu1 | fu2 | other
+//   (a database trigger fills any of the three the client leaves out)
 // PUT  body: { lead_id, fields: { pipeline_stage, linkedin_url, facebook_url,
 //              instagram_url, next_followup_at, last_contacted_at, outreach_notes } }
 
@@ -115,16 +119,26 @@ export default async (req) => {
         const bucket = (days) =>
           acts.filter(
             (a) =>
-              ['email', 'linkedin', 'call'].includes(a.activity_type) &&
+              ['email', 'linkedin', 'call', 'text'].includes(a.activity_type) &&
               now - new Date(a.created_at).getTime() <= days * 86400000,
           ).length
-        const sendsAll = acts.filter((a) => ['email', 'linkedin', 'call'].includes(a.activity_type)).length
+        const sendsAll = acts.filter((a) => ['email', 'linkedin', 'call', 'text'].includes(a.activity_type)).length
         return json({ sends7d: bucket(7), sends30d: bucket(30), sendsAll, since })
+      }
+      // Every outreach touch and reply since the v2 reset, for the channel views.
+      if (url.searchParams.get('touches') === '1') {
+        const touches = await fetchAll(
+          'aces_lead_activities',
+          'id,lead_id,activity_type,channel,direction,step,created_at',
+          'created_at.asc',
+          { created_at: 'gte.2026-10-18T00:00:00Z', direction: 'in.(outbound,inbound)' },
+        )
+        return json({ touches })
       }
       const leadId = url.searchParams.get('lead_id')
       if (leadId) {
         const params = new URLSearchParams({
-          select: 'id,lead_id,activity_type,description,created_at',
+          select: 'id,lead_id,activity_type,description,channel,direction,step,created_at',
           lead_id: `eq.${leadId}`,
           order: 'created_at.desc',
         })
@@ -147,7 +161,7 @@ export default async (req) => {
     if (method === 'POST') {
       if (!authorized(req)) return json({ error: 'Unauthorized' }, 401)
       const body = await req.json().catch(() => ({}))
-      const { lead_id, activity_type, description } = body
+      const { lead_id, activity_type, description, channel, direction, step } = body
       if (!lead_id || !activity_type) {
         return json({ error: 'lead_id and activity_type are required.' }, 400)
       }
@@ -162,6 +176,9 @@ export default async (req) => {
           lead_id,
           activity_type,
           description: description || '',
+          ...(channel ? { channel } : {}),
+          ...(direction ? { direction } : {}),
+          ...(step ? { step } : {}),
         }),
       })
       if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 200)}`)
@@ -169,7 +186,7 @@ export default async (req) => {
 
       // Logging a real touch (call/email/meeting) advances the contact clock so
       // the "never contacted" and overdue lists stay accurate.
-      if (['call', 'email', 'meeting', 'linkedin'].includes(activity_type)) {
+      if (['call', 'email', 'meeting', 'linkedin', 'text'].includes(activity_type)) {
         await fetch(`${REST}/aces_compliance_leads?id=eq.${lead_id}`, {
           method: 'PATCH',
           headers: supaHeaders({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),

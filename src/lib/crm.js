@@ -38,13 +38,20 @@ export async function fetchActivities(leadId) {
   return (await unwrap(res)).activities || []
 }
 
-export async function addActivity(leadId, activityType, description) {
+// extra: { channel, direction, step } — any left out are filled by the database.
+export async function addActivity(leadId, activityType, description, extra = {}) {
   const res = await fetch(`${API_BASE}/api/crm`, {
     method: 'POST',
     headers: { ...keyHeaders(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lead_id: leadId, activity_type: activityType, description }),
+    body: JSON.stringify({ lead_id: leadId, activity_type: activityType, description, ...extra }),
   })
   return (await unwrap(res)).activity
+}
+
+// Every outreach touch (outbound) and reply (inbound) since the v2 reset.
+export async function fetchTouches() {
+  const res = await fetch(`${API_BASE}/api/crm?touches=1`, { headers: keyHeaders() })
+  return (await unwrap(res)).touches || []
 }
 
 export async function updateLead(leadId, fields) {
@@ -79,13 +86,65 @@ export const CLOSED_STAGES = new Set(['won', 'lost', 'unqualified', 'archived_v1
 export const STAGE_BY_KEY = Object.fromEntries(STAGES.map((s) => [s.key, s]))
 
 export const ACTIVITY_TYPES = [
-  { key: 'call', label: 'Call', icon: '📞' },
-  { key: 'email', label: 'Email', icon: '✉️' },
-  { key: 'linkedin', label: 'LinkedIn msg', icon: '💬' },
+  { key: 'email', label: 'Email sent', icon: '✉️' },
+  { key: 'linkedin', label: 'LinkedIn message', icon: '💬' },
+  { key: 'call', label: 'Phone call', icon: '📞' },
+  { key: 'text', label: 'Text message', icon: '📱' },
+  { key: 'reply', label: 'Reply received', icon: '↩️' },
   { key: 'meeting', label: 'Meeting', icon: '🤝' },
   { key: 'note', label: 'Note', icon: '📝' },
-  { key: 'follow_up', label: 'Follow-up', icon: '🔔' },
+  { key: 'follow_up', label: 'Follow-up reminder', icon: '🔔' },
 ]
+
+// Outreach channels. activity = the activity_type logged when Nour sends on it.
+// sendable = shows up as a "Mark sent" option on a lead.
+export const CHANNELS = [
+  { key: 'email', label: 'Email', icon: '✉️', color: '#16A34A', activity: 'email', sendable: true },
+  { key: 'linkedin', label: 'LinkedIn', icon: '💬', color: '#60A5FA', activity: 'linkedin', sendable: true },
+  { key: 'phone', label: 'Phone', icon: '📞', color: '#F59E0B', activity: 'call', sendable: true },
+  { key: 'text', label: 'Text', icon: '📱', color: '#A855F7', activity: 'text', sendable: true },
+  { key: 'in_person', label: 'In person', icon: '🤝', color: '#22D3EE', activity: 'meeting', sendable: false },
+  { key: 'other', label: 'Video / other', icon: '🖥️', color: '#94A3B8', activity: 'meeting', sendable: false },
+]
+export const CHANNEL_BY_KEY = Object.fromEntries(CHANNELS.map((c) => [c.key, c]))
+export const SEND_CHANNELS = CHANNELS.filter((c) => c.sendable)
+
+// Activity types that count as an outreach send (vs. a meeting, note or reminder).
+export const SEND_TYPES = new Set(['email', 'linkedin', 'call', 'text'])
+
+export const STEP_LABEL = {
+  first: 'First message',
+  fu1: 'Follow-up 1',
+  fu2: 'Follow-up 2',
+  other: 'Extra touch',
+  v1: 'v1 (OSHA era)',
+}
+export const STEP_SHORT = { first: '1st', fu1: 'FU1', fu2: 'FU2', other: 'Extra', v1: 'v1' }
+
+// Roll touches up per lead: sends by channel, sends by channel+step, the steps
+// reached, the last send, and the first reply (with the channel it came in on).
+export function touchesByLead(touches) {
+  const map = new Map()
+  for (const t of touches || []) {
+    let r = map.get(t.lead_id)
+    if (!r) {
+      r = { byChannel: {}, byChannelStep: {}, steps: new Set(), last: null, reply: null, sends: 0 }
+      map.set(t.lead_id, r)
+    }
+    if (t.direction === 'inbound') {
+      if (!r.reply || new Date(t.created_at) < new Date(r.reply.created_at)) r.reply = t
+      continue
+    }
+    if (t.direction !== 'outbound' || !SEND_TYPES.has(t.activity_type) || !t.channel) continue
+    r.sends += 1
+    r.byChannel[t.channel] = (r.byChannel[t.channel] || 0) + 1
+    const step = t.step || 'other'
+    r.byChannelStep[`${t.channel}:${step}`] = (r.byChannelStep[`${t.channel}:${step}`] || 0) + 1
+    r.steps.add(step)
+    if (!r.last || new Date(t.created_at) >= new Date(r.last.created_at)) r.last = t
+  }
+  return map
+}
 
 export const ACTIVITY_BY_KEY = Object.fromEntries(ACTIVITY_TYPES.map((a) => [a.key, a]))
 
@@ -111,6 +170,33 @@ export function completeness(l) {
 
 export function stageOf(l) {
   return l.pipeline_stage || 'captured'
+}
+
+// Where a contact sits in the outreach sequence: first message, follow-up 1,
+// follow-up 2 (the last), or past outreach (they replied). Drives the message
+// box title, what "Mark sent" logs, and when the next follow-up is due.
+const PAST_OUTREACH = new Set(['replied', 'session_held', 'proposal_sent', 'won', 'lost', 'unqualified', 'archived_v1'])
+export function messageStep(l) {
+  const sends = Number(l.interaction_count) || 0
+  const stage = l.pipeline_stage || 'captured'
+  if (PAST_OUTREACH.has(stage)) {
+    return { key: 'reply', title: 'Reply', sentLabel: 'Message sent', nextDays: null,
+      help: 'This contact is past the outreach sequence. Marking sent logs the message without scheduling a follow-up.' }
+  }
+  if (sends <= 0) {
+    return { key: 'first', title: 'First Message', sentLabel: 'First message sent', nextDays: 3,
+      help: 'Marking sent moves this contact to Messaged and schedules follow-up 1 in 3 days.' }
+  }
+  if (sends === 1) {
+    return { key: 'fu1', title: 'Follow-up 1', sentLabel: 'Follow-up 1 sent', nextDays: 5,
+      help: 'Marking sent logs follow-up 1 and schedules the final follow-up in 5 days.' }
+  }
+  if (sends === 2) {
+    return { key: 'fu2', title: 'Follow-up 2 · final', sentLabel: 'Follow-up 2 sent', nextDays: null,
+      help: 'This is the last message in the sequence. Marking sent closes the follow-ups; the contact stays in Messaged.' }
+  }
+  return { key: 'done', title: 'Message', sentLabel: 'Message sent', nextDays: null,
+    help: 'The three-message sequence is complete. Marking sent logs the message without scheduling a follow-up.' }
 }
 
 export function hasDraft(l) {

@@ -1,4 +1,4 @@
-import { leadName, hasDraft, stageOf, STAGE_BY_KEY, CLOSED_STAGES } from '../../lib/crm'
+import { leadName, hasDraft, stageOf, messageStep, STAGE_BY_KEY, CLOSED_STAGES } from '../../lib/crm'
 import { shortDate, daysSince } from '../../lib/format'
 
 // Two action lists: follow-ups that are due/overdue, and captured contacts with
@@ -29,7 +29,7 @@ export default function TodaysActions({ leads, onSelect }) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <ActionCard
-        title="Overdue Follow-ups"
+        title="Follow-ups Due"
         count={overdue.length}
         accent="#DC2626"
         empty="No follow-ups due. You're all caught up. 🎉"
@@ -38,8 +38,14 @@ export default function TodaysActions({ leads, onSelect }) {
           const od = daysSince(l.next_followup_at)
           return (
             <Row key={l.id} lead={l} onSelect={onSelect}>
-              <span className="whitespace-nowrap text-xs font-semibold text-bad">
-                {od > 0 ? `${od}d overdue` : 'due today'}
+              <span className="text-right">
+                <span className="block whitespace-nowrap text-xs font-semibold text-bad">
+                  {od > 0 ? `${od}d overdue` : 'due today'}
+                </span>
+                <span className="block whitespace-nowrap text-[11px] text-muted">
+                  {messageStep(l).title}
+                  {hasDraft(l) ? ' · drafted' : ' · awaiting draft'}
+                </span>
               </span>
             </Row>
           )
